@@ -13,7 +13,7 @@ This project uses the Genesis World Physics Simulator to run a simulation of a b
 1.  **Clone the Repository**
     ```bash
     git clone [https://github.com/your-username/your-repository-name.git](https://github.com/your-username/your-repository-name.git)
-    cd your-repository-name
+    cd ~/genesis
     ```
 
 2.  **Create and Activate the Conda Environment**
