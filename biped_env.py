@@ -136,15 +136,6 @@ class BipedEnv:
         self.left_foot_euler = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Left foot euler angles
         self.right_foot_euler = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Right foot euler angles
         
-        # Store foot link indices for later use
-        self.left_foot_link_idx = None
-        self.right_foot_link_idx = None
-        for link in self.robot.links:
-            if link.name == "revolute_leftfoot":
-                self.left_foot_link_idx = link.idx
-            elif link.name == "revolute_rightfoot":
-                self.right_foot_link_idx = link.idx
-        
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
 
@@ -185,15 +176,17 @@ class BipedEnv:
             self.foot_contacts[:, 1] = torch.max(torch.norm(right_contact_data.view(self.num_envs, -1, 3), dim=-1), dim=-1)[0]
         
         # Update foot position and orientation data
-        if self.left_foot_link_idx is not None:
-            self.left_foot_pos[:] = self.robot.get_link_pos(self.left_foot_link_idx)
-            self.left_foot_quat[:] = self.robot.get_link_quat(self.left_foot_link_idx)
-            self.left_foot_euler[:] = quat_to_xyz(self.left_foot_quat, rpy=True, degrees=True)
-        
-        if self.right_foot_link_idx is not None:
-            self.right_foot_pos[:] = self.robot.get_link_pos(self.right_foot_link_idx)
-            self.right_foot_quat[:] = self.robot.get_link_quat(self.right_foot_link_idx)
-            self.right_foot_euler[:] = quat_to_xyz(self.right_foot_quat, rpy=True, degrees=True)
+        # In Genesis, we need to access link positions/orientations through the link objects directly
+        # since the robot entity doesn't have get_link_pos/get_link_quat methods
+        for link in self.robot.links:
+            if link.name == "revolute_leftfoot":
+                self.left_foot_pos[:] = link.get_pos()
+                self.left_foot_quat[:] = link.get_quat()
+                self.left_foot_euler[:] = quat_to_xyz(self.left_foot_quat, rpy=True, degrees=True)
+            elif link.name == "revolute_rightfoot":
+                self.right_foot_pos[:] = link.get_pos()
+                self.right_foot_quat[:] = link.get_quat()
+                self.right_foot_euler[:] = quat_to_xyz(self.right_foot_quat, rpy=True, degrees=True)
 
         # resample commands
         envs_idx = (
