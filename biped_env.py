@@ -337,11 +337,10 @@ class BipedEnv:
         return torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
     def _reward_forward_velocity(self):
-        # Forward velocity reward: w_vel * v_x or w_vel * exp(-(v_x - v_target)^2)
-        # Using exponential form for smoother reward
-        v_target = self.reward_cfg.get("forward_velocity_target", 0.5)  # Target forward velocity
-        velocity_error = torch.square(self.base_lin_vel[:, 0] - v_target)
-        return torch.exp(-velocity_error / self.reward_cfg.get("velocity_sigma", 0.25))
+        # Forward velocity reward: raw_r = 1.5 - exp((vₓ - 0.5)² / 0.12)
+        # This provides a smooth reward that peaks at vₓ = 0.5 m/s
+        velocity_error = torch.square(self.base_lin_vel[:, 0] - 0.5)
+        return 1.5 - torch.exp(velocity_error / 0.12)
 
     def _reward_alive_bonus(self):
         # Alive bonus: constant positive value per step

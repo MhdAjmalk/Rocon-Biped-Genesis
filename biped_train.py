@@ -148,7 +148,7 @@ def get_cfgs():
             "similar_to_default": -0.1, # Stay near neutral pose
             
             # New optimized rewards (replacing duplicates with better versions)
-            "forward_velocity": 2.0,    # Forward velocity reward (replaces tracking_lin_vel)
+            "forward_velocity": 2.0,   # Forward velocity reward (replaces tracking_lin_vel)
             "alive_bonus": 1.0,         # Alive bonus per step
             "fall_penalty": -100.0,     # Large penalty for falling
             "torso_stability": 10.0,    # Torso stability reward (replaces uprightness)
