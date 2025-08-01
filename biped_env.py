@@ -370,6 +370,6 @@ class BipedEnv:
     def _reward_height_maintenance(self):
         # Height maintenance: -w_height * (z_target - z_current)²
         # Note: This is similar to base_height but with different formulation
-        z_target = self.reward_cfg.get("height_target", 1.0)
+        z_target = self.reward_cfg.get("height_target", 0.35)
         height_error = torch.square(z_target - self.base_pos[:, 2])
         return -height_error  # Return negative error (will be scaled by negative weight in config)

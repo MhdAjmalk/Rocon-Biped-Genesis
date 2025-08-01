@@ -2,6 +2,8 @@ import argparse
 import os
 import pickle
 import shutil
+import signal
+import sys
 from importlib import metadata
 
 try:
@@ -106,7 +108,7 @@ def get_cfgs():
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
         "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - standing height for biped
-        "base_init_pos": [0.0, 0.0, 1.0],  # Higher for biped (from your URDF)
+        "base_init_pos": [0.0, 0.0, 0.5],  # Spawn height for biped
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
@@ -129,14 +131,14 @@ def get_cfgs():
     
     reward_cfg = {
         "tracking_sigma": 0.25,
-        "base_height_target": 1.0,  # Target standing height
+        "base_height_target": 0.35,  # Target standing height
         "feet_height_target": 0.1,  # Ground clearance during swing
         
         # New reward parameters
         "forward_velocity_target": 0.5,  # Target forward velocity (m/s)
         "velocity_sigma": 0.25,  # Velocity tracking smoothness
         "stability_factor": 1.0,  # Torso stability smoothness factor
-        "height_target": 1.0,  # Height maintenance target
+        "height_target": 0.35,  # Height maintenance target
         
         "reward_scales": {
             # Existing rewards (keeping non-duplicates)
@@ -168,7 +170,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="biped-walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=101)
+    parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
@@ -192,13 +194,35 @@ def main():
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
-    runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
+    # Setup signal handler for graceful shutdown
+    def signal_handler(sig, frame):
+        print('\n\nTraining interrupted by user (Ctrl+C)')
+        print('Saving current model...')
+        # The runner automatically saves periodically, so we just exit gracefully
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    print(f"Starting training... Press Ctrl+C to stop and save the model.")
+    print(f"Logs will be saved to: {log_dir}")
+    
+    try:
+        runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
+    except KeyboardInterrupt:
+        print('\n\nTraining interrupted by user (Ctrl+C)')
+        print('Final model save completed.')
+    except Exception as e:
+        print(f'\nTraining stopped due to error: {e}')
+        raise
 
 
 if __name__ == "__main__":
     main()
 
 """
-# training
+# training - runs until Ctrl+C (keyboard interrupt)
+python biped_train.py -e biped-walking -B 2048
+
+# training with specific max iterations
 python biped_train.py -e biped-walking -B 2048 --max_iterations 200
 """
