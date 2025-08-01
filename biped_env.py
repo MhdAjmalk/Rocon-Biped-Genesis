@@ -129,6 +129,21 @@ class BipedEnv:
         
         # Additional buffers for new observations
         self.foot_contacts = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # L/R foot contact
+        self.left_foot_pos = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Left foot position
+        self.right_foot_pos = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Right foot position
+        self.left_foot_quat = torch.zeros((self.num_envs, 4), device=gs.device, dtype=gs.tc_float)  # Left foot orientation
+        self.right_foot_quat = torch.zeros((self.num_envs, 4), device=gs.device, dtype=gs.tc_float)  # Right foot orientation
+        self.left_foot_euler = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Left foot euler angles
+        self.right_foot_euler = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)  # Right foot euler angles
+        
+        # Store foot link indices for later use
+        self.left_foot_link_idx = None
+        self.right_foot_link_idx = None
+        for link in self.robot.links:
+            if link.name == "revolute_leftfoot":
+                self.left_foot_link_idx = link.idx
+            elif link.name == "revolute_rightfoot":
+                self.right_foot_link_idx = link.idx
         
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
@@ -168,6 +183,17 @@ class BipedEnv:
         if self.right_foot_contact_sensor is not None:
             right_contact_data = self.right_foot_contact_sensor.read()
             self.foot_contacts[:, 1] = torch.max(torch.norm(right_contact_data.view(self.num_envs, -1, 3), dim=-1), dim=-1)[0]
+        
+        # Update foot position and orientation data
+        if self.left_foot_link_idx is not None:
+            self.left_foot_pos[:] = self.robot.get_link_pos(self.left_foot_link_idx)
+            self.left_foot_quat[:] = self.robot.get_link_quat(self.left_foot_link_idx)
+            self.left_foot_euler[:] = quat_to_xyz(self.left_foot_quat, rpy=True, degrees=True)
+        
+        if self.right_foot_link_idx is not None:
+            self.right_foot_pos[:] = self.robot.get_link_pos(self.right_foot_link_idx)
+            self.right_foot_quat[:] = self.robot.get_link_quat(self.right_foot_link_idx)
+            self.right_foot_euler[:] = quat_to_xyz(self.right_foot_quat, rpy=True, degrees=True)
 
         # resample commands
         envs_idx = (
@@ -249,10 +275,14 @@ class BipedEnv:
                 ankle_angles,  # Ankle joint angles L/R (2)
                 ankle_velocities,  # Ankle joint velocities L/R (2)
                 foot_contacts_normalized,  # Foot contact L/R (2)
+                self.left_foot_pos * self.obs_scales.get("foot_pos", 1.0),  # Left foot position (3)
+                self.right_foot_pos * self.obs_scales.get("foot_pos", 1.0),  # Right foot position (3)
+                self.left_foot_euler * self.obs_scales.get("foot_euler", 1.0),  # Left foot orientation (3)
+                self.right_foot_euler * self.obs_scales.get("foot_euler", 1.0),  # Right foot orientation (3)
                 self.last_actions,  # Previous actions (9)
             ],
             axis=-1,
-        )  # Total: 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 observations
+        )  # Total: 2+2+1+2+1+4+4+2+2+2+2+2+3+3+3+3+9 = 47 observations
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -295,6 +325,12 @@ class BipedEnv:
         self.last_actions[envs_idx] = 0.0
         self.last_dof_vel[envs_idx] = 0.0
         self.foot_contacts[envs_idx] = 0.0
+        self.left_foot_pos[envs_idx] = 0.0
+        self.right_foot_pos[envs_idx] = 0.0
+        self.left_foot_quat[envs_idx] = 0.0
+        self.right_foot_quat[envs_idx] = 0.0
+        self.left_foot_euler[envs_idx] = 0.0
+        self.right_foot_euler[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
@@ -337,10 +373,11 @@ class BipedEnv:
         return torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
     def _reward_forward_velocity(self):
-        # Forward velocity reward: raw_r = 1.5 - exp((vₓ - 0.5)² / 0.12)
-        # This provides a smooth reward that peaks at vₓ = 0.5 m/s
-        velocity_error = torch.square(self.base_lin_vel[:, 0] - 0.5)
-        return 1.5 - torch.exp(velocity_error / 0.12)
+        # Forward velocity reward: w_vel * v_x or w_vel * exp(-(v_x - v_target)^2)
+        # Using exponential form for smoother reward
+        v_target = self.reward_cfg.get("forward_velocity_target", 0.5)  # Target forward velocity
+        velocity_error = torch.square(self.base_lin_vel[:, 0] - v_target)
+        return torch.exp(-velocity_error / self.reward_cfg.get("velocity_sigma", 0.25))
 
     def _reward_alive_bonus(self):
         # Alive bonus: constant positive value per step
@@ -372,3 +409,48 @@ class BipedEnv:
         z_target = self.reward_cfg.get("height_target", 0.35)
         height_error = torch.square(z_target - self.base_pos[:, 2])
         return -height_error  # Return negative error (will be scaled by negative weight in config)
+
+    def _reward_foot_orientation_contact(self):
+        # Reward for keeping feet parallel to ground when in contact
+        # Only reward when foot is in contact with ground
+        contact_threshold = self.reward_cfg.get("contact_threshold", 0.1)
+        
+        # Check if feet are in contact
+        left_in_contact = self.foot_contacts[:, 0] > contact_threshold
+        right_in_contact = self.foot_contacts[:, 1] > contact_threshold
+        
+        # Calculate foot orientation errors (roll and pitch should be near zero)
+        left_orientation_error = torch.sum(torch.square(self.left_foot_euler[:, :2]), dim=1)  # roll² + pitch²
+        right_orientation_error = torch.sum(torch.square(self.right_foot_euler[:, :2]), dim=1)  # roll² + pitch²
+        
+        # Only apply reward when foot is in contact
+        left_reward = torch.where(
+            left_in_contact,
+            torch.exp(-left_orientation_error / self.reward_cfg.get("foot_orientation_sigma", 100.0)),
+            torch.zeros_like(left_orientation_error)
+        )
+        
+        right_reward = torch.where(
+            right_in_contact,
+            torch.exp(-right_orientation_error / self.reward_cfg.get("foot_orientation_sigma", 100.0)),
+            torch.zeros_like(right_orientation_error)
+        )
+        
+        return left_reward + right_reward
+
+    def _reward_foot_distance_penalty(self):
+        # Penalty if Y distance between feet grows more than 0.2m
+        max_foot_y_distance = self.reward_cfg.get("max_foot_y_distance", 0.2)
+        
+        # Calculate Y distance between feet
+        foot_y_distance = torch.abs(self.left_foot_pos[:, 1] - self.right_foot_pos[:, 1])
+        
+        # Apply penalty only when distance exceeds threshold
+        distance_violation = foot_y_distance > max_foot_y_distance
+        penalty = torch.where(
+            distance_violation,
+            torch.square(foot_y_distance - max_foot_y_distance),  # Quadratic penalty for violation
+            torch.zeros_like(foot_y_distance)
+        )
+        
+        return penalty  # Return positive penalty (will be scaled by negative weight)
