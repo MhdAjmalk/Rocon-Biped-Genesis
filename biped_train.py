@@ -101,6 +101,10 @@ def get_cfgs():
         # termination conditions - tighter for biped
         "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
         "termination_if_pitch_greater_than": 30, # degree
+        
+        # Fall penalty thresholds (in degrees)
+        "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
+        "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - standing height for biped
         "base_init_pos": [0.0, 0.0, 1.0],  # Higher for biped (from your URDF)
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
@@ -112,12 +116,14 @@ def get_cfgs():
     }
     
     obs_cfg = {
-        "num_obs": 36,  # 3 + 3 + 3 + 9 + 9 + 9 = 36 for biped
+        "num_obs": 35,  # 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 for new observation structure
         "obs_scales": {
             "lin_vel": 2.0,
             "ang_vel": 0.25,
             "dof_pos": 1.0,
             "dof_vel": 0.05,
+            "base_euler": 1.0,  # For torso pitch/roll angles
+            "base_height": 1.0,  # For torso height
         },
     }
     
@@ -125,14 +131,26 @@ def get_cfgs():
         "tracking_sigma": 0.25,
         "base_height_target": 1.0,  # Target standing height
         "feet_height_target": 0.1,  # Ground clearance during swing
+        
+        # New reward parameters
+        "forward_velocity_target": 0.5,  # Target forward velocity (m/s)
+        "velocity_sigma": 0.25,  # Velocity tracking smoothness
+        "stability_factor": 1.0,  # Torso stability smoothness factor
+        "height_target": 1.0,  # Height maintenance target
+        
         "reward_scales": {
-            "tracking_lin_vel": 1.0,    # Forward velocity tracking
+            # Existing rewards (keeping non-duplicates)
             "tracking_ang_vel": 0.5,    # Turning tracking
             "lin_vel_z": -2.0,          # Penalize vertical motion
-            "base_height": -30.0,       # Maintain standing height
             "action_rate": -0.01,       # Smooth actions
             "similar_to_default": -0.1, # Stay near neutral pose
-            "uprightness": -50.0,       # Strong penalty for falling
+            
+            # New optimized rewards (replacing duplicates with better versions)
+            "forward_velocity": 2.0,    # Forward velocity reward (replaces tracking_lin_vel)
+            "alive_bonus": 1.0,         # Alive bonus per step
+            "fall_penalty": -100.0,     # Large penalty for falling
+            "torso_stability": 10.0,    # Torso stability reward (replaces uprightness)
+            "height_maintenance": -1.0, # Height maintenance (replaces base_height)
         },
     }
     

@@ -2,6 +2,8 @@ import torch
 import math
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
+from genesis.sensors import RigidContactForceGridSensor
+import numpy as np
 
 
 def gs_rand_float(lower, upper, shape, device):
@@ -68,6 +70,21 @@ class BipedEnv:
 
         # names to indices
         self.motors_dof_idx = [self.robot.get_joint(name).dof_start for name in self.env_cfg["joint_names"]]
+        
+        # foot contact sensors
+        self.left_foot_contact_sensor = None
+        self.right_foot_contact_sensor = None
+        
+        # Find foot links and create contact sensors
+        for link in self.robot.links:
+            if link.name == "revolute_leftfoot":
+                self.left_foot_contact_sensor = RigidContactForceGridSensor(
+                    entity=self.robot, link_idx=link.idx, grid_size=(2, 2, 2)
+                )
+            elif link.name == "revolute_rightfoot":
+                self.right_foot_contact_sensor = RigidContactForceGridSensor(
+                    entity=self.robot, link_idx=link.idx, grid_size=(2, 2, 2)
+                )
 
         # PD control parameters
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
@@ -109,6 +126,10 @@ class BipedEnv:
             device=gs.device,
             dtype=gs.tc_float,
         )
+        
+        # Additional buffers for new observations
+        self.foot_contacts = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # L/R foot contact
+        
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
 
@@ -139,6 +160,14 @@ class BipedEnv:
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos[:] = self.robot.get_dofs_position(self.motors_dof_idx)
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motors_dof_idx)
+        
+        # Update foot contact data
+        if self.left_foot_contact_sensor is not None:
+            left_contact_data = self.left_foot_contact_sensor.read()
+            self.foot_contacts[:, 0] = torch.max(torch.norm(left_contact_data.view(self.num_envs, -1, 3), dim=-1), dim=-1)[0]
+        if self.right_foot_contact_sensor is not None:
+            right_contact_data = self.right_foot_contact_sensor.read()
+            self.foot_contacts[:, 1] = torch.max(torch.norm(right_contact_data.view(self.num_envs, -1, 3), dim=-1), dim=-1)[0]
 
         # resample commands
         envs_idx = (
@@ -167,17 +196,63 @@ class BipedEnv:
             self.episode_sums[name] += rew
 
         # compute observations
+        # Extract specific joint angles and velocities based on joint order: 
+        # [left_hip1, left_hip2, left_knee, left_ankle, right_hip1, right_hip2, right_knee, right_ankle, torso]
+        
+        # Hip joints (left_hip1, left_hip2, right_hip1, right_hip2)
+        hip_angles = torch.cat([
+            (self.dof_pos[:, [0, 1]] - self.default_dof_pos[[0, 1]]) * self.obs_scales["dof_pos"],  # Left hip
+            (self.dof_pos[:, [4, 5]] - self.default_dof_pos[[4, 5]]) * self.obs_scales["dof_pos"],  # Right hip
+        ], dim=1)  # 4 values
+        
+        hip_velocities = torch.cat([
+            self.dof_vel[:, [0, 1]] * self.obs_scales["dof_vel"],  # Left hip
+            self.dof_vel[:, [4, 5]] * self.obs_scales["dof_vel"],  # Right hip
+        ], dim=1)  # 4 values
+        
+        # Knee joints (left_knee, right_knee)
+        knee_angles = torch.cat([
+            (self.dof_pos[:, [2]] - self.default_dof_pos[[2]]) * self.obs_scales["dof_pos"],  # Left knee
+            (self.dof_pos[:, [6]] - self.default_dof_pos[[6]]) * self.obs_scales["dof_pos"],  # Right knee
+        ], dim=1)  # 2 values
+        
+        knee_velocities = torch.cat([
+            self.dof_vel[:, [2]] * self.obs_scales["dof_vel"],  # Left knee
+            self.dof_vel[:, [6]] * self.obs_scales["dof_vel"],  # Right knee
+        ], dim=1)  # 2 values
+        
+        # Ankle joints (left_ankle, right_ankle)
+        ankle_angles = torch.cat([
+            (self.dof_pos[:, [3]] - self.default_dof_pos[[3]]) * self.obs_scales["dof_pos"],  # Left ankle
+            (self.dof_pos[:, [7]] - self.default_dof_pos[[7]]) * self.obs_scales["dof_pos"],  # Right ankle
+        ], dim=1)  # 2 values
+        
+        ankle_velocities = torch.cat([
+            self.dof_vel[:, [3]] * self.obs_scales["dof_vel"],  # Left ankle
+            self.dof_vel[:, [7]] * self.obs_scales["dof_vel"],  # Right ankle
+        ], dim=1)  # 2 values
+        
+        # Normalize foot contacts (binary or normalized force)
+        foot_contacts_normalized = torch.clamp(self.foot_contacts, 0, 1)  # 2 values
+        
         self.obs_buf = torch.cat(
             [
-                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
-                self.projected_gravity,  # 3
-                self.commands * self.commands_scale,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 9 (for biped)
-                self.dof_vel * self.obs_scales["dof_vel"],  # 9 (for biped)
-                self.actions,  # 9 (for biped)
+                self.base_euler[:, :2] * self.obs_scales.get("base_euler", 1.0),  # Torso pitch/roll angle (2)
+                self.base_ang_vel[:, :2] * self.obs_scales["ang_vel"],  # Torso pitch/roll velocity (2)
+                self.base_ang_vel[:, [2]] * self.obs_scales["ang_vel"],  # Torso yaw velocity (1)
+                self.base_lin_vel[:, :2] * self.obs_scales["lin_vel"],  # Torso linear velocity X,Y (2)
+                self.base_pos[:, [2]] * self.obs_scales.get("base_height", 1.0),  # Torso height (1)
+                hip_angles,  # Hip joint angles L/R (4)
+                hip_velocities,  # Hip joint velocities L/R (4)
+                knee_angles,  # Knee joint angles L/R (2)
+                knee_velocities,  # Knee joint velocities L/R (2)
+                ankle_angles,  # Ankle joint angles L/R (2)
+                ankle_velocities,  # Ankle joint velocities L/R (2)
+                foot_contacts_normalized,  # Foot contact L/R (2)
+                self.last_actions,  # Previous actions (9)
             ],
             axis=-1,
-        )
+        )  # Total: 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 observations
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -219,6 +294,7 @@ class BipedEnv:
         # reset buffers
         self.last_actions[envs_idx] = 0.0
         self.last_dof_vel[envs_idx] = 0.0
+        self.foot_contacts[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
@@ -238,11 +314,6 @@ class BipedEnv:
         return self.obs_buf, None
 
     # ------------ reward functions----------------
-    def _reward_tracking_lin_vel(self):
-        # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
-
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw)
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
@@ -260,15 +331,45 @@ class BipedEnv:
         # Penalize joint poses far away from default pose
         return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
 
-    def _reward_base_height(self):
-        # Penalize base height away from target
-        return torch.square(self.base_pos[:, 2] - self.reward_cfg["base_height_target"])
-
-    def _reward_uprightness(self):
-        # Reward for keeping the robot upright (minimize roll and pitch)
-        return torch.sum(torch.square(self.base_euler[:, :2]), dim=1)
-
     def _reward_foot_clearance(self):
         # Penalize feet dragging (for biped locomotion)
         # This is a simplified version - you might want to add foot position tracking
         return torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
+
+    def _reward_forward_velocity(self):
+        # Forward velocity reward: w_vel * v_x or w_vel * exp(-(v_x - v_target)^2)
+        # Using exponential form for smoother reward
+        v_target = self.reward_cfg.get("forward_velocity_target", 0.5)  # Target forward velocity
+        velocity_error = torch.square(self.base_lin_vel[:, 0] - v_target)
+        return torch.exp(-velocity_error / self.reward_cfg.get("velocity_sigma", 0.25))
+
+    def _reward_alive_bonus(self):
+        # Alive bonus: constant positive value per step
+        return torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float)
+
+    def _reward_fall_penalty(self):
+        # Fall penalty: large negative value on termination
+        # This will be applied when robot falls (high roll/pitch angles)
+        fall_condition = (
+            (torch.abs(self.base_euler[:, 0]) > self.env_cfg.get("fall_roll_threshold", 30.0)) |  # Roll > 30 degrees
+            (torch.abs(self.base_euler[:, 1]) > self.env_cfg.get("fall_pitch_threshold", 30.0))   # Pitch > 30 degrees
+        )
+        return torch.where(
+            fall_condition,
+            torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),  # Apply penalty
+            torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)  # No penalty
+        )
+
+    def _reward_torso_stability(self):
+        # Torso stability: -w_orient * (φ² + θ²) or w_orient * exp(-k(φ² + θ²))
+        # Using exponential form for smoother reward
+        orientation_error = torch.sum(torch.square(self.base_euler[:, :2]), dim=1)  # φ² + θ² (roll² + pitch²)
+        k_stability = self.reward_cfg.get("stability_factor", 1.0)
+        return torch.exp(-k_stability * orientation_error)
+
+    def _reward_height_maintenance(self):
+        # Height maintenance: -w_height * (z_target - z_current)²
+        # Note: This is similar to base_height but with different formulation
+        z_target = self.reward_cfg.get("height_target", 1.0)
+        height_error = torch.square(z_target - self.base_pos[:, 2])
+        return -height_error  # Return negative error (will be scaled by negative weight in config)
