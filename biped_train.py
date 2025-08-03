@@ -118,7 +118,7 @@ def get_cfgs():
     }
     
     obs_cfg = {
-        "num_obs": 47,  # Updated: 2+2+1+2+1+4+4+2+2+2+2+2+9+6+6 = 47 (added foot position and orientation)
+        "num_obs": 35,  # 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 for new observation structure
         "obs_scales": {
             "lin_vel": 2.0,
             "ang_vel": 0.25,
@@ -126,8 +126,6 @@ def get_cfgs():
             "dof_vel": 0.05,
             "base_euler": 1.0,  # For torso pitch/roll angles
             "base_height": 1.0,  # For torso height
-            "foot_pos": 1.0,    # For foot positions (x,y,z)
-            "foot_euler": 1.0,  # For foot orientations (roll,pitch,yaw)
         },
     }
     
@@ -137,15 +135,12 @@ def get_cfgs():
         "feet_height_target": 0.1,  # Ground clearance during swing
         
         # New reward parameters
-        "forward_velocity_target": 0.5,  # Target forward velocity (m/s)
+        "forward_velocity_target": 0.5,
+        "velocity_tolerance": 0.05,
+        "velocity_penalty": 1.0,
         "velocity_sigma": 0.25,  # Velocity tracking smoothness
         "stability_factor": 1.0,  # Torso stability smoothness factor
         "height_target": 0.35,  # Height maintenance target
-        
-        # Foot reward parameters
-        "contact_threshold": 0.1,  # Force threshold for foot contact detection
-        "foot_orientation_sigma": 100.0,  # Smoothness for foot orientation reward
-        "max_foot_y_distance": 0.2,  # Maximum allowed Y distance between feet
         
         "reward_scales": {
             # Existing rewards (keeping non-duplicates)
@@ -160,10 +155,6 @@ def get_cfgs():
             "fall_penalty": -100.0,     # Large penalty for falling
             "torso_stability": 10.0,    # Torso stability reward (replaces uprightness)
             "height_maintenance": -1.0, # Height maintenance (replaces base_height)
-            
-            # New foot-related rewards
-            "foot_orientation_contact": 5.0,  # Reward for keeping feet parallel to ground when in contact
-            "foot_distance_penalty": -10.0,  # Penalty for feet too far apart in Y direction
         },
     }
     
@@ -180,7 +171,7 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="biped-walking")
-    parser.add_argument("-B", "--num_envs", type=int, default=4096)
+    parser.add_argument("-B", "--num_envs", type=int, default=200)
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
     args = parser.parse_args()
 
