@@ -11,7 +11,7 @@ def gs_rand_float(lower, upper, shape, device):
 
 
 class BipedEnv:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=True):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = None
@@ -136,7 +136,7 @@ class BipedEnv:
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), gs.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), gs.device)
-        self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), gs.device)
+        self.commands[envs_idx, 2] = 0.0  # Set angular velocity to zero (no turning)
 
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
@@ -318,11 +318,6 @@ class BipedEnv:
         return self.obs_buf, None
 
     # ------------ reward functions----------------
-    def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw)
-        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])
-
     def _reward_lin_vel_z(self):
         # Penalize z axis base linear velocity
         return torch.square(self.base_lin_vel[:, 2])
@@ -390,18 +385,18 @@ class BipedEnv:
     
     def _reward_sinusoidal_gait(self):
         """
-        Rewards the robot for following a sinusoidal joint trajectory.
-        This encourages a rhythmic, gait-like motion.
+        Rewards the robot for following a sinusoidal joint trajectory for leg joints only.
+        This encourages a rhythmic, gait-like motion without affecting the torso.
         """
         # Get sine wave parameters from config, with defaults
         amplitude = self.reward_cfg.get("gait_amplitude", 0.5)  # rad
         frequency = self.reward_cfg.get("gait_frequency", 0.5)  # Hz
         
-        # Define phase offsets for different joints to create a walking motion.
-        # [L_H1, L_H2, L_K, L_A, R_H1, R_H2, R_K, R_A, Torso]
+        # Define phase offsets for leg joints only (excluding torso at index 8).
+        # [R_H1, R_H2, R_K, R_A, L_H1, L_H2, L_K, L_A]
         # We'll make the main hip joints (H1) move opposite to each other.
         phase_offsets = torch.tensor(
-            [0, 0, 0, 0, np.pi, 0, 0, 0, 0], 
+            [0, 0, 0, 0, np.pi, 0, 0, 0], 
             device=self.device, dtype=gs.tc_float
         )
 
@@ -409,16 +404,45 @@ class BipedEnv:
         time = self.episode_length_buf * self.dt
         time = time.unsqueeze(1) # Reshape for broadcasting
 
-        # Calculate the target angle for each joint using the sine wave formula:
-        # target = default + A * sin(2 * pi * f * t + phase)
-        target_dof_pos = self.default_dof_pos + amplitude * torch.sin(
+        # Calculate the target angle for leg joints only (exclude torso joint at index 8)
+        leg_joints_default = self.default_dof_pos[:-1]  # All joints except the last one (torso)
+        target_leg_pos = leg_joints_default + amplitude * torch.sin(
             2 * np.pi * frequency * time + phase_offsets
         )
 
-        # Calculate the error between the current and target joint positions
-        error = torch.sum(torch.square(self.dof_pos - target_dof_pos), dim=1)
+        # Calculate the error between the current and target joint positions for leg joints only
+        leg_joints_current = self.dof_pos[:, :-1]  # All joints except the last one (torso)
+        error = torch.sum(torch.square(leg_joints_current - target_leg_pos), dim=1)
 
         # Use an exponential function to convert the error to a reward
         # A smaller error results in a higher reward.
         sigma = self.reward_cfg.get("gait_sigma", 0.25)
+        return torch.exp(-error / sigma)
+
+    def _reward_torso_sinusoidal(self):
+        """
+        Rewards the torso for following a sinusoidal motion.
+        This encourages rhythmic torso movement independent of leg gait.
+        """
+        # Get torso sine wave parameters from config, with defaults
+        torso_amplitude = self.reward_cfg.get("torso_amplitude", 0.2)  # rad (smaller amplitude for torso)
+        torso_frequency = self.reward_cfg.get("torso_frequency", 0.3)  # Hz (different frequency from legs)
+        torso_phase = self.reward_cfg.get("torso_phase", 0.0)  # Phase offset for torso
+
+        # Calculate the current time in the episode
+        time = self.episode_length_buf * self.dt
+        time = time.unsqueeze(1) # Reshape for broadcasting
+
+        # Calculate the target angle for torso joint (index 8)
+        torso_default = self.default_dof_pos[8]  # Torso joint default position
+        target_torso_pos = torso_default + torso_amplitude * torch.sin(
+            2 * np.pi * torso_frequency * time + torso_phase
+        )
+
+        # Calculate the error between current and target torso position
+        torso_current = self.dof_pos[:, 8]  # Current torso joint position
+        error = torch.square(torso_current - target_torso_pos.squeeze())
+
+        # Use an exponential function to convert the error to a reward
+        sigma = self.reward_cfg.get("torso_sigma", 0.25)
         return torch.exp(-error / sigma)

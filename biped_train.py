@@ -144,15 +144,21 @@ def get_cfgs():
         "gait_frequency": 0.6,   # The desired frequency of the gait in Hz
         "gait_sigma": 0.25,      # The tolerance for the reward. Smaller values are stricter.
         
+        # Torso sinusoidal motion parameters
+        "torso_amplitude": 0.2,  # Smaller amplitude for torso sinusoidal motion (rad)
+        "torso_frequency": 0.3,  # Different frequency from leg gait (Hz)
+        "torso_phase": 1.732,      # Phase offset for torso motion
+        "torso_sigma": 0.25,     # Tolerance for torso sinusoidal reward
+        
         "tracking_sigma": 0.25,
         
         "reward_scales": {
             # Existing rewards (keeping non-duplicates)
-            "tracking_ang_vel": 0.5,    # Turning tracking
             "lin_vel_z": -2.0,          # Penalize vertical motion
-            "action_rate": -0.01,       # Smooth actions
+            "action_rate": -0.02,       # Smooth actions
             "similar_to_default": -0.1, # Stay near neutral pose
-            "sinusoidal_gait": 1.5,
+            "sinusoidal_gait": 1.5,     # Leg sinusoidal gait (excluding torso)
+            "torso_sinusoidal": 2.0,    # Torso sinusoidal motion reward
             
             # New optimized rewards (replacing duplicates with better versions)
             "forward_velocity": 10.0,    # Forward velocity reward (replaces tracking_lin_vel)
