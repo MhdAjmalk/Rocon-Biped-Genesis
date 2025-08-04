@@ -341,15 +341,17 @@ class BipedEnv:
         return torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
     def _reward_forward_velocity(self):
-        # Constant negative penalty if forward velocity deviates from target
+        # Positive reward if forward velocity is within tolerance, negative penalty if outside
         v_target = self.reward_cfg.get("forward_velocity_target", 0.5)
         vel_error = torch.abs(self.base_lin_vel[:, 0] - v_target)
         tolerance = self.reward_cfg.get("velocity_tolerance", 0.05)
         penalty = self.reward_cfg.get("velocity_penalty", 1.0)
+        reward = self.reward_cfg.get("velocity_reward", 1.0)
         return torch.where(
-            vel_error > tolerance,
-            -penalty * torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),
-            torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float),)
+            vel_error <= tolerance,
+            reward * torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),  # Positive reward within tolerance
+            -penalty * torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),  # Negative penalty outside tolerance
+        )
 
     def _reward_alive_bonus(self):
         # Alive bonus: constant positive value per step
@@ -381,3 +383,48 @@ class BipedEnv:
         z_target = self.reward_cfg.get("height_target", 0.35)
         height_error = torch.square(z_target - self.base_pos[:, 2])
         return -height_error  # Return negative error (will be scaled by negative weight in config)
+
+    def _reward_joint_movement(self):
+        # Reward for joint movement - encourages locomotion
+        # Reward based on absolute joint velocities (encourages movement)
+        joint_vel_magnitude = torch.sum(torch.abs(self.dof_vel), dim=1)
+        movement_threshold = self.reward_cfg.get("movement_threshold", 0.1)
+        movement_scale = self.reward_cfg.get("movement_scale", 1.0)
+        
+        # Give reward proportional to joint movement, but cap it to avoid excessive movement
+        return torch.clamp(joint_vel_magnitude * movement_scale, 0.0, movement_threshold)
+    
+    def _reward_sinusoidal_gait(self):
+        """
+        Rewards the robot for following a sinusoidal joint trajectory.
+        This encourages a rhythmic, gait-like motion.
+        """
+        # Get sine wave parameters from config, with defaults
+        amplitude = self.reward_cfg.get("gait_amplitude", 0.5)  # rad
+        frequency = self.reward_cfg.get("gait_frequency", 0.5)  # Hz
+        
+        # Define phase offsets for different joints to create a walking motion.
+        # [L_H1, L_H2, L_K, L_A, R_H1, R_H2, R_K, R_A, Torso]
+        # We'll make the main hip joints (H1) move opposite to each other.
+        phase_offsets = torch.tensor(
+            [0, 0, 0, 0, np.pi, 0, 0, 0, 0], 
+            device=self.device, dtype=gs.tc_float
+        )
+
+        # Calculate the current time in the episode
+        time = self.episode_length_buf * self.dt
+        time = time.unsqueeze(1) # Reshape for broadcasting
+
+        # Calculate the target angle for each joint using the sine wave formula:
+        # target = default + A * sin(2 * pi * f * t + phase)
+        target_dof_pos = self.default_dof_pos + amplitude * torch.sin(
+            2 * np.pi * frequency * time + phase_offsets
+        )
+
+        # Calculate the error between the current and target joint positions
+        error = torch.sum(torch.square(self.dof_pos - target_dof_pos), dim=1)
+
+        # Use an exponential function to convert the error to a reward
+        # A smaller error results in a higher reward.
+        sigma = self.reward_cfg.get("gait_sigma", 0.25)
+        return torch.exp(-error / sigma)

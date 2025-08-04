@@ -138,9 +138,16 @@ def get_cfgs():
         "forward_velocity_target": 0.5,
         "velocity_tolerance": 0.05,
         "velocity_penalty": 1.0,
-        "velocity_sigma": 0.25,  # Velocity tracking smoothness
+        "velocity_reward": 1.0,
         "stability_factor": 1.0,  # Torso stability smoothness factor
         "height_target": 0.35,  # Height maintenance target
+        "movement_threshold": 2.0,  # Maximum movement reward threshold
+        "movement_scale": 0.1,  # Scale factor for joint movement reward
+        "gait_amplitude": 0.4,   # The desired amplitude of the joint movement in radians
+        "gait_frequency": 0.6,   # The desired frequency of the gait in Hz
+        "gait_sigma": 0.25,      # The tolerance for the reward. Smaller values are stricter.
+        
+        "tracking_sigma": 0.25,
         
         "reward_scales": {
             # Existing rewards (keeping non-duplicates)
@@ -148,6 +155,7 @@ def get_cfgs():
             "lin_vel_z": -2.0,          # Penalize vertical motion
             "action_rate": -0.01,       # Smooth actions
             "similar_to_default": -0.1, # Stay near neutral pose
+            "sinusoidal_gait": 1.5,
             
             # New optimized rewards (replacing duplicates with better versions)
             "forward_velocity": 2.0,    # Forward velocity reward (replaces tracking_lin_vel)
@@ -155,6 +163,7 @@ def get_cfgs():
             "fall_penalty": -100.0,     # Large penalty for falling
             "torso_stability": 10.0,    # Torso stability reward (replaces uprightness)
             "height_maintenance": -1.0, # Height maintenance (replaces base_height)
+            "joint_movement": 1.0,      # Reward for joint movement (encourages locomotion)
         },
     }
     
