@@ -71,29 +71,29 @@ def get_train_cfg(exp_name, max_iterations):
 def get_cfgs():
     env_cfg = {
         "num_actions": 9,  # 9 DOF for biped: 4 per leg + 1 torso
-        # joint/link names - based on your URDF with realistic standing pose
-        "default_joint_angles": {  # [rad] - neutral standing pose
-            "left_hip1": 0.0,      # hip abduction/adduction (range: ±1.732 rad = ±99°)
-            "left_hip2": -0.1,     # hip flexion/extension (range: ±1.732 rad = ±99°) - slight forward lean
-            "left_knee": 0.2,      # knee flexion (range: ±2.0 rad = ±114°) - slight bend
-            "left_ankle": -0.1,    # ankle flexion (range: ±1.732 rad = ±99°) - slight plantarflexion
-            "right_hip1": 0.0,     # hip abduction/adduction (range: ±1.732 rad = ±99°)  
-            "right_hip2": -0.1,    # hip flexion/extension (range: ±1.732 rad = ±99°) - slight forward lean
-            "right_knee": 0.2,     # knee flexion (range: ±2.0 rad = ±114°) - slight bend
-            "right_ankle": -0.1,   # ankle flexion (range: ±1.732 rad = ±99°) - slight plantarflexion
-            "torso": 0.0,          # torso rotation (range: ±1.732 rad = ±99°)
+        # joint/link names - based on your URDF with neutral standing pose
+        "default_joint_angles": {  # [rad] - neutral standing pose with ground contact
+            "right_hip1": 0.0,     # hip abduction/adduction 
+            "right_hip2": 0.652,   # hip flexion/extension
+            "right_knee": 1.30,    # knee flexion
+            "right_ankle": 0.634,  # ankle flexion
+            "left_hip1": 0.0,      # hip abduction/adduction
+            "left_hip2": 0.652,    # hip flexion/extension
+            "left_knee": -1.30,    # knee flexion (negative for left leg)
+            "left_ankle": 0.634,   # ankle flexion
+            "torso": 0.0,          # torso rotation
         },
         "joint_names": [
+            # Right leg first (as per your configuration)
+            "right_hip1",
+            "right_hip2",
+            "right_knee", 
+            "right_ankle",
             # Left leg
             "left_hip1",
             "left_hip2", 
             "left_knee",
             "left_ankle",
-            # Right leg
-            "right_hip1",
-            "right_hip2",
-            "right_knee", 
-            "right_ankle",
             # Torso
             "torso",
         ],
@@ -107,8 +107,8 @@ def get_cfgs():
         # Fall penalty thresholds (in degrees)
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
         "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
-        # base pose - standing height for biped
-        "base_init_pos": [0.0, 0.0, 0.5],  # Spawn height for biped
+        # base pose - height adjusted for neutral configuration ground contact
+        "base_init_pos": [0.0, 0.0, 0.25],  # Lower spawn height for ground contact with neutral pose
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
@@ -131,7 +131,7 @@ def get_cfgs():
     
     reward_cfg = {
         "tracking_sigma": 0.25,
-        "base_height_target": 0.35,  # Target standing height
+        "base_height_target": 0.25,  # Target height for neutral crouched pose
         "feet_height_target": 0.1,  # Ground clearance during swing
         
         # New reward parameters
@@ -140,7 +140,7 @@ def get_cfgs():
         "velocity_penalty": 1.0,
         "velocity_reward": 1.0,
         "stability_factor": 1.0,  # Torso stability smoothness factor
-        "height_target": 0.35,  # Height maintenance target
+        "height_target": 0.25,  # Height maintenance target for neutral pose
         "movement_threshold": 2.0,  # Maximum movement reward threshold
         "movement_scale": 0.1,  # Scale factor for joint movement reward
         "gait_amplitude": 0.4,   # The desired amplitude of the joint movement in radians
@@ -180,7 +180,7 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="biped-walking")
-    parser.add_argument("-B", "--num_envs", type=int, default=200)
+    parser.add_argument("-B", "--num_envs", type=int, default=1)
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
     args = parser.parse_args()
 
