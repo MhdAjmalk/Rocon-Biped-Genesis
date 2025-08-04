@@ -108,7 +108,7 @@ def get_cfgs():
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
         "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - height adjusted for neutral configuration ground contact
-        "base_init_pos": [0.0, 0.0, 0.25],  # Lower spawn height for ground contact with neutral pose
+        "base_init_pos": [0.0, 0.0, -0.50],  # Lower spawn height for ground contact with neutral pose
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
@@ -136,9 +136,6 @@ def get_cfgs():
         
         # New reward parameters
         "forward_velocity_target": 0.5,
-        "velocity_tolerance": 0.05,
-        "velocity_penalty": 1.0,
-        "velocity_reward": 1.0,
         "stability_factor": 1.0,  # Torso stability smoothness factor
         "height_target": 0.25,  # Height maintenance target for neutral pose
         "movement_threshold": 2.0,  # Maximum movement reward threshold
@@ -158,11 +155,11 @@ def get_cfgs():
             "sinusoidal_gait": 1.5,
             
             # New optimized rewards (replacing duplicates with better versions)
-            "forward_velocity": 2.0,    # Forward velocity reward (replaces tracking_lin_vel)
-            "alive_bonus": 1.0,         # Alive bonus per step
+            "forward_velocity": 10.0,    # Forward velocity reward (replaces tracking_lin_vel)
+            "alive_bonus": 0.5,         # Alive bonus per step
             "fall_penalty": -100.0,     # Large penalty for falling
-            "torso_stability": 10.0,    # Torso stability reward (replaces uprightness)
-            "height_maintenance": -1.0, # Height maintenance (replaces base_height)
+            "torso_stability": 2.0,    # Torso stability reward (replaces uprightness)
+            "height_maintenance": -2.0, # Height maintenance (replaces base_height)
             "joint_movement": 1.0,      # Reward for joint movement (encourages locomotion)
         },
     }

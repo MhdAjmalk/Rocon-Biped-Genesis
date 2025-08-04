@@ -341,17 +341,11 @@ class BipedEnv:
         return torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
     def _reward_forward_velocity(self):
-        # Positive reward if forward velocity is within tolerance, negative penalty if outside
+        # Exponential reward for forward velocity tracking
         v_target = self.reward_cfg.get("forward_velocity_target", 0.5)
-        vel_error = torch.abs(self.base_lin_vel[:, 0] - v_target)
-        tolerance = self.reward_cfg.get("velocity_tolerance", 0.05)
-        penalty = self.reward_cfg.get("velocity_penalty", 1.0)
-        reward = self.reward_cfg.get("velocity_reward", 1.0)
-        return torch.where(
-            vel_error <= tolerance,
-            reward * torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),  # Positive reward within tolerance
-            -penalty * torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_float),  # Negative penalty outside tolerance
-        )
+        vel_error = torch.square(self.base_lin_vel[:, 0] - v_target)
+        sigma = self.reward_cfg.get("tracking_sigma", 0.25)
+        return torch.exp(-vel_error / sigma)
 
     def _reward_alive_bonus(self):
         # Alive bonus: constant positive value per step
