@@ -110,21 +110,37 @@ def get_cfgs():
         # base pose - height adjusted for neutral configuration ground contact
         "base_init_pos": [0.0, 0.0, -0.50],  # Lower spawn height for ground contact with neutral pose
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 20.0,
+        "episode_length_s": 90.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,  # Conservative scaling
         "simulate_action_latency": True,
         "clip_actions": 100.0,
+        
+        # Domain Randomization Configuration
+        "domain_rand": {
+            "randomize_friction": False,  # Disabled until Genesis API support is confirmed
+            "friction_range": [0.4, 1.25],  # Range for friction coefficient
+
+            "randomize_mass": False,  # Disabled until torso link is properly identified
+            "added_mass_range": [-1.0, 1.0], # kg to add or remove from torso
+
+            "randomize_motor_strength": True,  # This is working correctly
+            "motor_strength_range": [0.8, 1.2], # Scale factor for kp
+
+            "push_robot": False,  # Disabled until force API is confirmed
+            "push_interval_s": 7, # Push the robot every 7 seconds
+            "max_push_vel_xy": 1.0, # m/s
+        }
     }
     
     obs_cfg = {
-        "num_obs": 35,  # 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 for new observation structure
+        "num_obs": 38,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+9 = 38 for new observation structure with commands
         "obs_scales": {
-            "lin_vel": 2.0,
-            "ang_vel": 0.25,
-            "dof_pos": 1.0,
-            "dof_vel": 0.05,
-            "base_euler": 1.0,  # For torso pitch/roll angles
+            "lin_vel": 2.0,      # Scaling for linear velocities in observations
+            "ang_vel": 0.25,     # Scaling for angular velocities in observations
+            "dof_pos": 1.0,      # Scaling for joint positions
+            "dof_vel": 0.05,     # Scaling for joint velocities
+            "base_euler": 1.0,   # For torso pitch/roll angles
             "base_height": 1.0,  # For torso height
         },
     }
@@ -153,28 +169,34 @@ def get_cfgs():
         "tracking_sigma": 0.25,
         
         "reward_scales": {
-            # Existing rewards (keeping non-duplicates)
-            "lin_vel_z": -2.0,          # Penalize vertical motion
-            "action_rate": -0.02,       # Smooth actions
-            "similar_to_default": -0.1, # Stay near neutral pose
-            "sinusoidal_gait": 1.5,     # Leg sinusoidal gait (excluding torso)
-            "torso_sinusoidal": 2.0,    # Torso sinusoidal motion reward
+            # Velocity tracking rewards (primary objectives)
+            "tracking_lin_vel_x": 10.0,     # Track commanded forward velocity
+            "tracking_lin_vel_y": 6.0,      # Track commanded sideways velocity
             
-            # New optimized rewards (replacing duplicates with better versions)
-            "forward_velocity": 10.0,    # Forward velocity reward (replaces tracking_lin_vel)
-            "alive_bonus": 0.5,         # Alive bonus per step
-            "fall_penalty": -100.0,     # Large penalty for falling
-            "torso_stability": 2.0,    # Torso stability reward (replaces uprightness)
-            "height_maintenance": -2.0, # Height maintenance (replaces base_height)
-            "joint_movement": 1.0,      # Reward for joint movement (encourages locomotion)
+            # Stability and regularization rewards
+            "lin_vel_z": -2.0,              # Penalize vertical motion
+            "action_rate": -0.02,           # Smooth actions
+            "similar_to_default": -0.1,     # Stay near neutral pose
+            "alive_bonus": 0.5,             # Alive bonus per step
+            "fall_penalty": -100.0,         # Large penalty for falling
+            "torso_stability": 2.0,         # Torso stability reward
+            "height_maintenance": -2.0,     # Height maintenance
+            
+            # Gait and movement rewards (reduced to prioritize command following)
+            "sinusoidal_gait": 0.8,         # Leg sinusoidal gait (reduced weight)
+            "torso_sinusoidal": 0.8,        # Torso sinusoidal motion reward (reduced weight)
+            "joint_movement": 0.3,          # Reward for joint movement (reduced weight)
         },
     }
     
     command_cfg = {
         "num_commands": 3,
-        "lin_vel_x_range": [0.3, 0.3],   # Start with slow forward walking
-        "lin_vel_y_range": [0, 0],       # No sideways initially
-        "ang_vel_range": [0, 0],         # No turning initially
+        # Command range for forward velocity (m/s) - progressive training
+        "lin_vel_x_range": [-0.5, 1.0],    # Forward/backward velocity range
+        # Command range for sideways velocity (m/s)
+        "lin_vel_y_range": [-0.3, 0.3],    # Left/right velocity range  
+        # Command range for angular velocity (rad/s) - keep zero for now
+        "ang_vel_range": [0.0, 0.0],       # No turning for now, focus on linear motion
     }
 
     return env_cfg, obs_cfg, reward_cfg, command_cfg

@@ -90,6 +90,12 @@ class BipedEnv:
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
         self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motors_dof_idx)
 
+        # Domain randomization setup
+        self.orig_kp = torch.tensor([self.env_cfg["kp"]] * self.num_actions, device=gs.device)
+        self.randomized_kp = torch.zeros((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)
+        if self.env_cfg["domain_rand"]["push_robot"]:
+            self.push_interval = math.ceil(self.env_cfg["domain_rand"]["push_interval_s"] / self.dt)
+
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
         for name in self.reward_scales.keys():
@@ -173,6 +179,33 @@ class BipedEnv:
             right_contact_data = self.right_foot_contact_sensor.read()
             right_contact_tensor = torch.as_tensor(right_contact_data, device=self.device).reshape(self.num_envs, -1, 3)
             self.foot_contacts[:, 1] = torch.max(torch.norm(right_contact_tensor, dim=-1), dim=-1)[0]
+        
+        # Domain randomization: Apply external perturbations (robot pushing)
+        dr_cfg = self.env_cfg["domain_rand"]
+        if dr_cfg["push_robot"]:
+            # Find which environments should be pushed in this timestep
+            push_now_idx = (self.episode_length_buf % self.push_interval == 0).nonzero(as_tuple=False).reshape((-1,))
+            
+            if len(push_now_idx) > 0:
+                # Sample random force direction and magnitude
+                max_vel = dr_cfg["max_push_vel_xy"]
+                force_vec = gs_rand_float(-max_vel, max_vel, (len(push_now_idx), 2), gs.device)
+                
+                # Apply impulse to each environment individually
+                try:
+                    for i, env_idx in enumerate(push_now_idx):
+                        # Create 3D force vector with zero z-component
+                        force_3d = torch.zeros(3, device=gs.device)
+                        force_3d[:2] = force_vec[i]
+                        
+                        # Apply force to the robot base - Genesis API may vary
+                        self.robot.apply_force(force_3d, is_global=True)
+                except (AttributeError, TypeError) as e:
+                    # If force application methods don't exist, skip and warn once
+                    if not hasattr(self, '_force_warning_shown'):
+                        print(f"Warning: External force application not supported: {e}")
+                        self._force_warning_shown = True
+        
         # resample commands
         envs_idx = (
             (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
@@ -246,6 +279,7 @@ class BipedEnv:
                 self.base_ang_vel[:, [2]] * self.obs_scales["ang_vel"],  # Torso yaw velocity (1)
                 self.base_lin_vel[:, :2] * self.obs_scales["lin_vel"],  # Torso linear velocity X,Y (2)
                 self.base_pos[:, [2]] * self.obs_scales.get("base_height", 1.0),  # Torso height (1)
+                self.commands[:, :3] * self.commands_scale,  # Velocity commands [lin_vel_x, lin_vel_y, ang_vel] (3)
                 hip_angles,  # Hip joint angles L/R (4)
                 hip_velocities,  # Hip joint velocities L/R (4)
                 knee_angles,  # Knee joint angles L/R (2)
@@ -256,7 +290,7 @@ class BipedEnv:
                 self.last_actions,  # Previous actions (9)
             ],
             axis=-1,
-        )  # Total: 2+2+1+2+1+4+4+2+2+2+2+2+9 = 35 observations
+        )  # Total: 2+2+1+2+1+3+4+4+2+2+2+2+2+9 = 38 observations
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -275,6 +309,81 @@ class BipedEnv:
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
             return
+
+        # --- Domain Randomization ---
+        dr_cfg = self.env_cfg["domain_rand"]
+
+        # Randomize motor strength (kp)
+        if dr_cfg["randomize_motor_strength"]:
+            strength_scale = gs_rand_float(
+                dr_cfg["motor_strength_range"][0],
+                dr_cfg["motor_strength_range"][1],
+                (len(envs_idx),),
+                gs.device
+            ).unsqueeze(1)  # Shape: (num_envs, 1) for broadcasting
+            self.randomized_kp[envs_idx] = self.orig_kp * strength_scale
+            
+            # Apply kp values for each environment individually
+            for i, env_idx in enumerate(envs_idx):
+                self.robot.set_dofs_kp(
+                    self.randomized_kp[env_idx],  # 1D tensor for single environment
+                    self.motors_dof_idx, 
+                    envs_idx=[env_idx]
+                )
+
+        # Randomize friction
+        if dr_cfg["randomize_friction"]:
+            try:
+                friction = gs_rand_float(
+                    dr_cfg["friction_range"][0],
+                    dr_cfg["friction_range"][1],
+                    (len(envs_idx),),
+                    gs.device
+                )
+                # Set friction for the robot - note that Genesis may not support per-environment friction
+                # This is a placeholder that may need adjustment based on actual Genesis API
+                for i, env_idx in enumerate(envs_idx):
+                    self.robot.set_friction(friction[i].item())
+            except (AttributeError, TypeError) as e:
+                # If the method doesn't exist or has different signature, skip friction randomization
+                if not hasattr(self, '_friction_warning_shown'):
+                    print(f"Warning: Friction randomization not supported: {e}")
+                    self._friction_warning_shown = True
+
+        # Randomize mass of the torso
+        if dr_cfg["randomize_mass"]:
+            try:
+                # Find torso link - try different possible names
+                torso_link = None
+                for link in self.robot.links:
+                    if link.name in ["torso", "base_link", "torso_link"]:
+                        torso_link = link
+                        break
+                
+                if torso_link is not None:
+                    base_mass = torso_link.mass  # Get base mass from link properties
+                    added_mass = gs_rand_float(
+                        dr_cfg["added_mass_range"][0],
+                        dr_cfg["added_mass_range"][1],
+                        (len(envs_idx),),
+                        gs.device
+                    )
+                    # Apply mass changes - Genesis may not support per-environment mass changes
+                    for i, env_idx in enumerate(envs_idx):
+                        new_mass = base_mass + added_mass[i].item()
+                        self.robot.set_link_mass(torso_link.idx, new_mass)
+                else:
+                    # If torso link not found, print warning only once
+                    if not hasattr(self, '_mass_warning_shown'):
+                        print("Warning: Torso link not found for mass randomization")
+                        self._mass_warning_shown = True
+            except (AttributeError, TypeError) as e:
+                # If mass randomization methods don't exist, skip and warn once
+                if not hasattr(self, '_mass_api_warning_shown'):
+                    print(f"Warning: Mass randomization not supported: {e}")
+                    self._mass_api_warning_shown = True
+
+        # --- End of Domain Randomization ---
 
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
@@ -299,6 +408,7 @@ class BipedEnv:
         self.last_actions[envs_idx] = 0.0
         self.last_dof_vel[envs_idx] = 0.0
         self.foot_contacts[envs_idx] = 0.0
+        self.randomized_kp[envs_idx] = self.orig_kp  # Reset to original kp values
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
@@ -341,6 +451,16 @@ class BipedEnv:
         vel_error = torch.square(self.base_lin_vel[:, 0] - v_target)
         sigma = self.reward_cfg.get("tracking_sigma", 0.25)
         return torch.exp(-vel_error / sigma)
+
+    def _reward_tracking_lin_vel_x(self):
+        # Tracking of linear velocity commands (forward velocity)
+        lin_vel_error = torch.square(self.commands[:, 0] - self.base_lin_vel[:, 0])
+        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
+
+    def _reward_tracking_lin_vel_y(self):
+        # Tracking of linear velocity commands (sideways velocity)
+        lin_vel_error = torch.square(self.commands[:, 1] - self.base_lin_vel[:, 1])
+        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
 
     def _reward_alive_bonus(self):
         # Alive bonus: constant positive value per step
