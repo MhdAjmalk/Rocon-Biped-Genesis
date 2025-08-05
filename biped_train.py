@@ -74,13 +74,13 @@ def get_cfgs():
         # joint/link names - based on your URDF with neutral standing pose
         "default_joint_angles": {  # [rad] - neutral standing pose with ground contact
             "right_hip1": 0.0,     # hip abduction/adduction 
-            "right_hip2": 0.652,   # hip flexion/extension
+            "right_hip2": -0.652,   # hip flexion/extension
             "right_knee": 1.30,    # knee flexion
-            "right_ankle": 0.634,  # ankle flexion
+            "right_ankle": -0.634,  # ankle flexion
             "left_hip1": 0.0,      # hip abduction/adduction
-            "left_hip2": 0.652,    # hip flexion/extension
+            "left_hip2": -0.652,    # hip flexion/extension
             "left_knee": -1.30,    # knee flexion (negative for left leg)
-            "left_ankle": 0.634,   # ankle flexion
+            "left_ankle": -0.634,   # ankle flexion
             "torso": 0.0,          # torso rotation
         },
         "joint_names": [
@@ -205,13 +205,13 @@ def get_cfgs():
             "similar_to_default": -0.1,     # Stay near neutral pose
             "alive_bonus": 0.5,             # Alive bonus per step
             "fall_penalty": -100.0,         # Large penalty for falling
-            "torso_stability": 2.0,         # Torso stability reward
+            "torso_stability": 5.0,         # Torso stability reward
             "height_maintenance": -2.0,     # Height maintenance
             
             # Gait and movement rewards (reduced to prioritize command following)
-            "sinusoidal_gait": 0.8,         # Leg sinusoidal gait (reduced weight)
-            "torso_sinusoidal": 0.8,        # Torso sinusoidal motion reward (reduced weight)
-            "joint_movement": 0.3,          # Reward for joint movement (reduced weight)
+            "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
+            "torso_sinusoidal": 5.0,        # Torso sinusoidal motion reward (reduced weight)
+            "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
         },
     }
     

@@ -416,22 +416,43 @@ class BipedEnv:
                 # Find torso link - try different possible names
                 torso_link = None
                 for link in self.robot.links:
-                    if link.name in ["torso", "base_link", "torso_link"]:
+                    if link.name in ["torso", "base_link", "torso_link", "base", "servo1"]:
                         torso_link = link
                         break
                 
                 if torso_link is not None:
-                    base_mass = torso_link.mass  # Get base mass from link properties
+                    # Use a default base mass since RigidLink doesn't expose mass attribute
+                    base_mass = 1.0  # Default base mass in kg
                     added_mass = gs_rand_float(
                         dr_cfg["added_mass_range"][0],
                         dr_cfg["added_mass_range"][1],
                         (len(envs_idx),),
                         gs.device
                     )
-                    # Apply mass changes - Genesis may not support per-environment mass changes
+                    # Try different Genesis API methods for mass randomization
                     for i, env_idx in enumerate(envs_idx):
                         new_mass = base_mass + added_mass[i].item()
-                        self.robot.set_link_mass(torso_link.idx, new_mass)
+                        try:
+                            # Try method 1: set_link_mass on robot
+                            if hasattr(self.robot, 'set_link_mass'):
+                                self.robot.set_link_mass(torso_link.idx, new_mass)
+                            # Try method 2: set_mass on link
+                            elif hasattr(torso_link, 'set_mass'):
+                                torso_link.set_mass(new_mass)
+                            # Try method 3: mass property on link
+                            elif hasattr(torso_link, 'mass'):
+                                torso_link.mass = new_mass
+                            else:
+                                # If no mass methods are available, mass randomization isn't supported
+                                if not hasattr(self, '_mass_api_warning_shown'):
+                                    print("Warning: Mass randomization not supported - no mass modification API found")
+                                    self._mass_api_warning_shown = True
+                                break
+                        except Exception as e:
+                            if not hasattr(self, '_mass_api_warning_shown'):
+                                print(f"Warning: Mass randomization not supported: {e}")
+                                self._mass_api_warning_shown = True
+                            break
                 else:
                     # If torso link not found, print warning only once
                     if not hasattr(self, '_mass_warning_shown'):
