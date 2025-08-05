@@ -133,8 +133,23 @@ class BipedEnv:
             dtype=gs.tc_float,
         )
         
+        # Motor Backlash Buffers
+        self.motor_backlash = torch.zeros((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)
+        self.motor_backlash_direction = torch.ones((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)  # Direction of last movement
+        self.last_motor_positions = torch.zeros_like(self.actions)
+        
         # Additional buffers for new observations
         self.foot_contacts = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # L/R foot contact
+        self.foot_contacts_raw = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # Raw contact readings
+        
+        # Foot Contact Domain Randomization Buffers
+        self.contact_thresholds = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # Per-foot contact thresholds
+        self.contact_noise_scale = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # Per-foot noise scales
+        self.contact_false_positive_prob = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # False positive rates
+        self.contact_false_negative_prob = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)  # False negative rates
+        self.contact_delay_steps = torch.zeros((self.num_envs, 2), device=gs.device, dtype=torch.long)  # Delay in timesteps
+        self.contact_delay_buffer = torch.zeros((self.num_envs, 2, 5), device=gs.device, dtype=gs.tc_float)  # Circular buffer for delays
+        self.contact_delay_idx = torch.zeros((self.num_envs,), device=gs.device, dtype=torch.long)  # Current delay buffer index
         
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
@@ -147,6 +162,11 @@ class BipedEnv:
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
+        
+        # Apply motor backlash if enabled
+        if self.env_cfg["domain_rand"]["add_motor_backlash"]:
+            exec_actions = self._apply_motor_backlash(exec_actions)
+        
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
         self.robot.control_dofs_position(target_dof_pos, self.motors_dof_idx)
         self.scene.step()
@@ -173,12 +193,18 @@ class BipedEnv:
             # Convert to a tensor, move to the correct device, then reshape
             left_contact_tensor = torch.as_tensor(left_contact_data, device=self.device).reshape(self.num_envs, -1, 3)
             # Now perform torch operations
-            self.foot_contacts[:, 0] = torch.max(torch.norm(left_contact_tensor, dim=-1), dim=-1)[0]
+            self.foot_contacts_raw[:, 0] = torch.max(torch.norm(left_contact_tensor, dim=-1), dim=-1)[0]
 
         if self.right_foot_contact_sensor is not None:
             right_contact_data = self.right_foot_contact_sensor.read()
             right_contact_tensor = torch.as_tensor(right_contact_data, device=self.device).reshape(self.num_envs, -1, 3)
-            self.foot_contacts[:, 1] = torch.max(torch.norm(right_contact_tensor, dim=-1), dim=-1)[0]
+            self.foot_contacts_raw[:, 1] = torch.max(torch.norm(right_contact_tensor, dim=-1), dim=-1)[0]
+        
+        # Apply foot contact domain randomization
+        if self.env_cfg["domain_rand"]["randomize_foot_contacts"]:
+            self.foot_contacts = self._apply_foot_contact_randomization(self.foot_contacts_raw)
+        else:
+            self.foot_contacts = self.foot_contacts_raw.clone()
         
         # Domain randomization: Apply external perturbations (robot pushing)
         dr_cfg = self.env_cfg["domain_rand"]
@@ -272,21 +298,55 @@ class BipedEnv:
         # Normalize foot contacts (binary or normalized force)
         foot_contacts_normalized = torch.clamp(self.foot_contacts, 0, 1)  # 2 values
         
+        # Apply observation noise if enabled
+        if self.env_cfg["domain_rand"]["add_observation_noise"]:
+            # Add noise to sensor readings
+            base_euler_noisy = self.base_euler[:, :2] + self._get_noise("base_euler", (self.num_envs, 2))
+            base_ang_vel_xy_noisy = self.base_ang_vel[:, :2] + self._get_noise("ang_vel", (self.num_envs, 2))
+            base_ang_vel_z_noisy = self.base_ang_vel[:, [2]] + self._get_noise("ang_vel", (self.num_envs, 1))
+            base_lin_vel_noisy = self.base_lin_vel[:, :2] + self._get_noise("lin_vel", (self.num_envs, 2))
+            base_pos_z_noisy = self.base_pos[:, [2]] + self._get_noise("base_pos", (self.num_envs, 1))
+            
+            # Add noise to joint measurements
+            hip_angles_noisy = hip_angles + self._get_noise("dof_pos", (self.num_envs, 4))
+            hip_velocities_noisy = hip_velocities + self._get_noise("dof_vel", (self.num_envs, 4))
+            knee_angles_noisy = knee_angles + self._get_noise("dof_pos", (self.num_envs, 2))
+            knee_velocities_noisy = knee_velocities + self._get_noise("dof_vel", (self.num_envs, 2))
+            ankle_angles_noisy = ankle_angles + self._get_noise("dof_pos", (self.num_envs, 2))
+            ankle_velocities_noisy = ankle_velocities + self._get_noise("dof_vel", (self.num_envs, 2))
+            
+            # Add noise to foot contact readings
+            foot_contacts_noisy = torch.clamp(foot_contacts_normalized + self._get_noise("foot_contact", (self.num_envs, 2)), 0, 1)
+        else:
+            # Use clean observations
+            base_euler_noisy = self.base_euler[:, :2]
+            base_ang_vel_xy_noisy = self.base_ang_vel[:, :2]
+            base_ang_vel_z_noisy = self.base_ang_vel[:, [2]]
+            base_lin_vel_noisy = self.base_lin_vel[:, :2]
+            base_pos_z_noisy = self.base_pos[:, [2]]
+            hip_angles_noisy = hip_angles
+            hip_velocities_noisy = hip_velocities
+            knee_angles_noisy = knee_angles
+            knee_velocities_noisy = knee_velocities
+            ankle_angles_noisy = ankle_angles
+            ankle_velocities_noisy = ankle_velocities
+            foot_contacts_noisy = foot_contacts_normalized
+        
         self.obs_buf = torch.cat(
             [
-                self.base_euler[:, :2] * self.obs_scales.get("base_euler", 1.0),  # Torso pitch/roll angle (2)
-                self.base_ang_vel[:, :2] * self.obs_scales["ang_vel"],  # Torso pitch/roll velocity (2)
-                self.base_ang_vel[:, [2]] * self.obs_scales["ang_vel"],  # Torso yaw velocity (1)
-                self.base_lin_vel[:, :2] * self.obs_scales["lin_vel"],  # Torso linear velocity X,Y (2)
-                self.base_pos[:, [2]] * self.obs_scales.get("base_height", 1.0),  # Torso height (1)
+                base_euler_noisy * self.obs_scales.get("base_euler", 1.0),  # Torso pitch/roll angle (2)
+                base_ang_vel_xy_noisy * self.obs_scales["ang_vel"],  # Torso pitch/roll velocity (2)
+                base_ang_vel_z_noisy * self.obs_scales["ang_vel"],  # Torso yaw velocity (1)
+                base_lin_vel_noisy * self.obs_scales["lin_vel"],  # Torso linear velocity X,Y (2)
+                base_pos_z_noisy * self.obs_scales.get("base_height", 1.0),  # Torso height (1)
                 self.commands[:, :3] * self.commands_scale,  # Velocity commands [lin_vel_x, lin_vel_y, ang_vel] (3)
-                hip_angles,  # Hip joint angles L/R (4)
-                hip_velocities,  # Hip joint velocities L/R (4)
-                knee_angles,  # Knee joint angles L/R (2)
-                knee_velocities,  # Knee joint velocities L/R (2)
-                ankle_angles,  # Ankle joint angles L/R (2)
-                ankle_velocities,  # Ankle joint velocities L/R (2)
-                foot_contacts_normalized,  # Foot contact L/R (2)
+                hip_angles_noisy,  # Hip joint angles L/R (4)
+                hip_velocities_noisy,  # Hip joint velocities L/R (4)
+                knee_angles_noisy,  # Knee joint angles L/R (2)
+                knee_velocities_noisy,  # Knee joint velocities L/R (2)
+                ankle_angles_noisy,  # Ankle joint angles L/R (2)
+                ankle_velocities_noisy,  # Ankle joint velocities L/R (2)
+                foot_contacts_noisy,  # Foot contact L/R (2) - with noise applied
                 self.last_actions,  # Previous actions (9)
             ],
             axis=-1,
@@ -409,6 +469,56 @@ class BipedEnv:
         self.last_dof_vel[envs_idx] = 0.0
         self.foot_contacts[envs_idx] = 0.0
         self.randomized_kp[envs_idx] = self.orig_kp  # Reset to original kp values
+        
+        # Reset motor backlash buffers
+        if self.env_cfg["domain_rand"]["add_motor_backlash"]:
+            # Randomize backlash for each joint in each environment
+            backlash_values = gs_rand_float(
+                self.env_cfg["domain_rand"]["backlash_range"][0],
+                self.env_cfg["domain_rand"]["backlash_range"][1],
+                (len(envs_idx), self.num_actions),
+                gs.device
+            )
+            self.motor_backlash[envs_idx] = backlash_values
+            self.motor_backlash_direction[envs_idx] = 1.0  # Reset direction
+            self.last_motor_positions[envs_idx] = 0.0
+        
+        # Reset foot contact domain randomization parameters
+        if self.env_cfg["domain_rand"]["randomize_foot_contacts"]:
+            fc_params = self.env_cfg["domain_rand"]["foot_contact_params"]
+            
+            # Randomize contact thresholds
+            self.contact_thresholds[envs_idx] = gs_rand_float(
+                fc_params["contact_threshold_range"][0],
+                fc_params["contact_threshold_range"][1],
+                (len(envs_idx), 2),
+                gs.device
+            )
+            
+            # Randomize noise scales
+            self.contact_noise_scale[envs_idx] = gs_rand_float(
+                fc_params["contact_noise_range"][0],
+                fc_params["contact_noise_range"][1],
+                (len(envs_idx), 2),
+                gs.device
+            )
+            
+            # Randomize false positive/negative rates
+            self.contact_false_positive_prob[envs_idx] = fc_params["false_positive_rate"]
+            self.contact_false_negative_prob[envs_idx] = fc_params["false_negative_rate"]
+            
+            # Randomize delay steps
+            self.contact_delay_steps[envs_idx] = torch.randint(
+                fc_params["contact_delay_range"][0],
+                fc_params["contact_delay_range"][1] + 1,
+                (len(envs_idx), 2),
+                device=gs.device
+            )
+            
+            # Reset delay buffers
+            self.contact_delay_buffer[envs_idx] = 0.0
+            self.contact_delay_idx[envs_idx] = 0
+        
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
@@ -566,3 +676,106 @@ class BipedEnv:
         # Use an exponential function to convert the error to a reward
         sigma = self.reward_cfg.get("torso_sigma", 0.25)
         return torch.exp(-error / sigma)
+
+    # ------------ Helper Methods for Backlash and Noise ----------------
+    
+    def _apply_motor_backlash(self, actions):
+        """
+        Apply motor backlash model to the actions.
+        Backlash creates a dead zone when the motor changes direction.
+        """
+        # Calculate the direction of movement
+        position_diff = actions - self.last_motor_positions
+        
+        # Create mask for direction changes
+        direction_change = (position_diff * self.motor_backlash_direction) < 0
+        
+        # Where direction changes, apply backlash offset
+        backlash_offset = self.motor_backlash * self.motor_backlash_direction
+        actions_with_backlash = actions.clone()
+        actions_with_backlash[direction_change] += backlash_offset[direction_change]
+        
+        # Update direction tracking
+        self.motor_backlash_direction = torch.sign(position_diff)
+        self.motor_backlash_direction[torch.abs(position_diff) < 1e-6] = self.motor_backlash_direction[torch.abs(position_diff) < 1e-6]  # Keep previous direction for tiny movements
+        
+        # Update last positions
+        self.last_motor_positions = actions.clone()
+        
+        return actions_with_backlash
+    
+    def _get_noise(self, noise_type, shape):
+        """
+        Generate Gaussian noise for sensor measurements.
+        
+        Args:
+            noise_type: Type of noise ('dof_pos', 'dof_vel', 'lin_vel', 'ang_vel', 'base_pos', 'base_euler', 'foot_contact')
+            shape: Shape of the noise tensor
+        
+        Returns:
+            Gaussian noise tensor
+        """
+        noise_scale = self.env_cfg["domain_rand"]["noise_scales"][noise_type]
+        return torch.randn(shape, device=self.device, dtype=gs.tc_float) * noise_scale
+    
+    def _apply_foot_contact_randomization(self, raw_contacts):
+        """
+        Apply domain randomization to foot contact readings.
+        
+        This simulates realistic foot contact sensor behavior including:
+        - Contact threshold variations
+        - Sensor noise
+        - False positives/negatives
+        - Contact detection delays
+        
+        Args:
+            raw_contacts: Raw contact force readings [num_envs, 2]
+            
+        Returns:
+            Randomized contact readings [num_envs, 2]
+        """
+        randomized_contacts = raw_contacts.clone()
+        
+        # Apply contact thresholds
+        contact_detected = raw_contacts > self.contact_thresholds
+        
+        # Add sensor noise
+        if self.env_cfg["domain_rand"]["add_observation_noise"]:
+            noise = torch.randn_like(raw_contacts) * self.contact_noise_scale
+            randomized_contacts = raw_contacts + noise
+        
+        # Apply false positives (random contact detection when no contact)
+        false_positive_mask = torch.rand_like(raw_contacts) < self.contact_false_positive_prob
+        no_contact_mask = ~contact_detected
+        false_positive_final = false_positive_mask & no_contact_mask
+        randomized_contacts[false_positive_final] = 1.0
+        
+        # Apply false negatives (missing actual contact)
+        false_negative_mask = torch.rand_like(raw_contacts) < self.contact_false_negative_prob
+        contact_mask = contact_detected
+        false_negative_final = false_negative_mask & contact_mask
+        randomized_contacts[false_negative_final] = 0.0
+        
+        # Apply contact detection delays
+        # Update delay buffer with current readings
+        current_idx = self.contact_delay_idx[0] % self.contact_delay_buffer.shape[2]  # Use first env as reference
+        
+        # Store current readings in delay buffer for all environments
+        for env_idx in range(self.num_envs):
+            self.contact_delay_buffer[env_idx, :, current_idx] = randomized_contacts[env_idx, :]
+        
+        # Get delayed readings for each environment/foot
+        for env_idx in range(self.num_envs):
+            for foot_idx in range(2):
+                delay = self.contact_delay_steps[env_idx, foot_idx]
+                if delay > 0 and delay < self.contact_delay_buffer.shape[2]:
+                    delay_idx = (current_idx - delay) % self.contact_delay_buffer.shape[2]
+                    randomized_contacts[env_idx, foot_idx] = self.contact_delay_buffer[env_idx, foot_idx, delay_idx]
+        
+        # Update delay buffer index for all environments
+        self.contact_delay_idx += 1
+        
+        # Ensure contacts are in valid range [0, 1]
+        randomized_contacts = torch.clamp(randomized_contacts, 0.0, 1.0)
+        
+        return randomized_contacts

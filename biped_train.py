@@ -118,18 +118,44 @@ def get_cfgs():
         
         # Domain Randomization Configuration
         "domain_rand": {
-            "randomize_friction": False,  # Disabled until Genesis API support is confirmed
+            "randomize_friction": True,  # Disabled until Genesis API support is confirmed
             "friction_range": [0.4, 1.25],  # Range for friction coefficient
 
-            "randomize_mass": False,  # Disabled until torso link is properly identified
-            "added_mass_range": [-1.0, 1.0], # kg to add or remove from torso
+            "randomize_mass": True,  # Disabled until torso link is properly identified
+            "added_mass_range": [-0.4, 0.4], # kg to add or remove from torso
 
             "randomize_motor_strength": True,  # This is working correctly
-            "motor_strength_range": [0.8, 1.2], # Scale factor for kp
+            "motor_strength_range": [0.6, 1.2], # Scale factor for kp
 
-            "push_robot": False,  # Disabled until force API is confirmed
+            "push_robot": True,  # Disabled until force API is confirmed
             "push_interval_s": 7, # Push the robot every 7 seconds
             "max_push_vel_xy": 1.0, # m/s
+            
+            # Motor Backlash Configuration
+            "add_motor_backlash": True,
+            "backlash_range": [0.01, 0.07],  # Backlash angle range in radians (0.5-3 degrees)
+            
+            # Sensor Noise Configuration
+            "add_observation_noise": True,
+            "noise_scales": {
+                "dof_pos": 0.02,    # Noise stddev for joint positions (rad)
+                "dof_vel": 0.2,     # Noise stddev for joint velocities (rad/s)
+                "lin_vel": 0.1,     # Noise stddev for base linear velocity (m/s)
+                "ang_vel": 0.15,    # Noise stddev for base angular velocity (rad/s)
+                "base_pos": 0.01,   # Noise stddev for base position (meters)
+                "base_euler": 0.03, # Noise stddev for base orientation (rad)
+                "foot_contact": 0.1, # Noise stddev for foot contact sensors
+            },
+            
+            # Foot Contact Domain Randomization
+            "randomize_foot_contacts": True,
+            "foot_contact_params": {
+                "contact_threshold_range": [0.01, 0.15],  # Force threshold for contact detection (N)
+                "contact_noise_range": [0.0, 0.2],       # Additional noise on contact readings
+                "false_positive_rate": 0.05,             # Probability of false contact detection
+                "false_negative_rate": 0.05,             # Probability of missing actual contact
+                "contact_delay_range": [0, 2],           # Delay in contact detection (timesteps)
+            }
         }
     }
     
