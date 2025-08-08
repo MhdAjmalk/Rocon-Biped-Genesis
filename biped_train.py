@@ -70,7 +70,7 @@ def get_train_cfg(exp_name, max_iterations):
 
 def get_cfgs():
     env_cfg = {
-        "num_actions": 9,  # 9 DOF for biped: 4 per leg + 1 torso
+        "num_actions": 8,  # 8 DOF for biped: 4 per leg (removed torso)
         # joint/link names - based on your URDF with neutral standing pose
         "default_joint_angles": {  # [rad] - neutral standing pose with ground contact
             "right_hip1": 0.0,     # hip abduction/adduction 
@@ -81,7 +81,6 @@ def get_cfgs():
             "left_hip2": -0.652,    # hip flexion/extension
             "left_knee": -1.30,    # knee flexion (negative for left leg)
             "left_ankle": -0.634,   # ankle flexion
-            "torso": 0.0,          # torso rotation
         },
         "joint_names": [
             # Right leg first (as per your configuration)
@@ -94,8 +93,6 @@ def get_cfgs():
             "left_hip2", 
             "left_knee",
             "left_ankle",
-            # Torso
-            "torso",
         ],
         # PD control parameters - start conservative and tune
         "kp": 30.0,  # Higher than quadruped due to biped instability
@@ -164,7 +161,7 @@ def get_cfgs():
     }
     
     obs_cfg = {
-        "num_obs": 38,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+9 = 38 for new observation structure with commands
+        "num_obs": 37,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37 (reduced from 38 by removing 1 torso from prev_actions)
         "obs_scales": {
             "lin_vel": 2.0,      # Scaling for linear velocities in observations
             "ang_vel": 0.25,     # Scaling for angular velocities in observations
@@ -190,12 +187,6 @@ def get_cfgs():
         "gait_frequency": 0.6,   # The desired frequency of the gait in Hz
         "gait_sigma": 0.25,      # The tolerance for the reward. Smaller values are stricter.
         
-        # Torso sinusoidal motion parameters
-        "torso_amplitude": 0.2,  # Smaller amplitude for torso sinusoidal motion (rad)
-        "torso_frequency": 0.3,  # Different frequency from leg gait (Hz)
-        "torso_phase": 1.732,      # Phase offset for torso motion
-        "torso_sigma": 0.25,     # Tolerance for torso sinusoidal reward
-        
         "tracking_sigma": 0.25,
         
         # Actuator constraint parameters
@@ -220,7 +211,6 @@ def get_cfgs():
             
             # Gait and movement rewards (reduced to prioritize command following)
             "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
-            "torso_sinusoidal": 5.0,        # Torso sinusoidal motion reward (reduced weight)
             "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
             
             # Actuator constraint reward

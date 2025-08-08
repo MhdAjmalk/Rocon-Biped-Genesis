@@ -303,7 +303,7 @@ class BipedEnv:
 
         # compute observations
         # Extract specific joint angles and velocities based on joint order: 
-        # [left_hip1, left_hip2, left_knee, left_ankle, right_hip1, right_hip2, right_knee, right_ankle, torso]
+        # [left_hip1, left_hip2, left_knee, left_ankle, right_hip1, right_hip2, right_knee, right_ankle]
         
         # Hip joints (left_hip1, left_hip2, right_hip1, right_hip2)
         hip_angles = torch.cat([
@@ -393,11 +393,11 @@ class BipedEnv:
             ankle_angles_noisy,  # Ankle joint angles L/R (2)
             ankle_velocities_noisy,  # Ankle joint velocities L/R (2)
             foot_contacts_noisy,  # Foot contact L/R (2) - with noise applied
-            self.last_actions,  # Previous actions (9)
+            self.last_actions,  # Previous actions (8)
         ]
         
         # In-place concatenation - optimization
-        torch.cat(obs_components, dim=-1, out=self.obs_buf)  # Total: 2+2+1+2+1+3+4+4+2+2+2+2+2+9 = 38 observations
+        torch.cat(obs_components, dim=-1, out=self.obs_buf)  # Total: 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37 observations
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -714,39 +714,15 @@ class BipedEnv:
         time = self.episode_length_buf * self.dt
         time = time.unsqueeze(1) # Reshape for broadcasting
 
-        leg_joints_default = self.default_dof_pos[:-1]  # All joints except the last one (torso)
+        leg_joints_default = self.default_dof_pos  # All 8 joints (no torso)
         target_leg_pos = leg_joints_default + amplitude * torch.sin(
             2 * np.pi * frequency * time + phase_offsets
         )
 
-        leg_joints_current = self.dof_pos[:, :-1]  # All joints except the last one (torso)
+        leg_joints_current = self.dof_pos  # All 8 joints (no torso)
         error = torch.sum(torch.square(leg_joints_current - target_leg_pos), dim=1)
 
         sigma = self.reward_cfg.get("gait_sigma", 0.25)
-        return torch.exp(-error / sigma)
-
-    def _reward_torso_sinusoidal(self):
-        # Get torso sine wave parameters from config, with defaults
-        torso_amplitude = self.reward_cfg.get("torso_amplitude", 0.2)  # rad (smaller amplitude for torso)
-        torso_frequency = self.reward_cfg.get("torso_frequency", 0.3)  # Hz (different frequency from legs)
-        torso_phase = self.reward_cfg.get("torso_phase", 0.0)  # Phase offset for torso
-
-        # Calculate the current time in the episode
-        time = self.episode_length_buf * self.dt
-        time = time.unsqueeze(1) # Reshape for broadcasting
-
-        # Calculate the target angle for torso joint (index 8)
-        torso_default = self.default_dof_pos[8]  # Torso joint default position
-        target_torso_pos = torso_default + torso_amplitude * torch.sin(
-            2 * np.pi * torso_frequency * time + torso_phase
-        )
-
-        # Calculate the error between current and target torso position
-        torso_current = self.dof_pos[:, 8]  # Current torso joint position
-        error = torch.square(torso_current - target_torso_pos.squeeze())
-
-        # Use an exponential function to convert the error to a reward
-        sigma = self.reward_cfg.get("torso_sigma", 0.25)
         return torch.exp(-error / sigma)
 
     def _reward_actuator_constraint(self):
