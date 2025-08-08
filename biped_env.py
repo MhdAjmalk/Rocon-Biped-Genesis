@@ -272,17 +272,6 @@ class BipedEnv:
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
         self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
-        
-        # Check actuator constraint violations for termination
-        if self.env_cfg.get("terminate_on_actuator_violation", False):
-            # Calculate constraint values: speed + 3.5*|torque|
-            constraint_values = torch.abs(self.dof_vel) + self.reward_cfg.get("actuator_torque_coeff", 3.5) * torch.abs(self.joint_torques)
-            constraint_limit = self.reward_cfg.get("actuator_constraint_limit", 6.16)
-            termination_threshold = self.env_cfg.get("actuator_violation_termination_threshold", 2.0)
-            
-            # Check for severe violations (beyond termination threshold)
-            max_violation_per_env = torch.max(constraint_values - constraint_limit, dim=1)[0]
-            self.reset_buf |= max_violation_per_env > termination_threshold
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).reshape((-1,))
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=gs.device, dtype=gs.tc_float)

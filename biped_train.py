@@ -101,15 +101,11 @@ def get_cfgs():
         "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
         "termination_if_pitch_greater_than": 30, # degree
         
-        # Actuator constraint termination
-        "terminate_on_actuator_violation": True,  # Enable termination on severe violations
-        "actuator_violation_termination_threshold": 2.0,  # Terminate if violation > this value
-        
         # Fall penalty thresholds (in degrees)
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
         "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - height adjusted for neutral configuration ground contact
-        "base_init_pos": [0.0, 0.0, -0.50],  # Lower spawn height for ground contact with neutral pose
+        "base_init_pos": [0.0, 0.0, 0.50],  # Higher spawn height to avoid ground collision
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 90.0,
         "resampling_time_s": 4.0,
