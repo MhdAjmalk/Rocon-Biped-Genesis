@@ -189,12 +189,6 @@ def get_cfgs():
         
         "tracking_sigma": 0.25,
         
-        # Actuator constraint parameters
-        "actuator_constraint_limit": 6.16,  # speed + 3.5*torque <= 6.16
-        "actuator_torque_coeff": 3.5,       # Coefficient for torque in constraint
-        "actuator_tolerance": 0.5,           # Tolerance before penalty starts
-        "actuator_termination_threshold": 2.0,  # Violation level for termination
-        
         "reward_scales": {
             # Velocity tracking rewards (primary objectives)
             "tracking_lin_vel_x": 10.0,     # Track commanded forward velocity
@@ -212,9 +206,6 @@ def get_cfgs():
             # Gait and movement rewards (reduced to prioritize command following)
             "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
             "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
-            
-            # Actuator constraint reward
-            "actuator_constraint": -20.0,   # Strong penalty for actuator constraint violation
         },
     }
     

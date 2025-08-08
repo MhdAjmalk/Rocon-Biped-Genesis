@@ -725,40 +725,6 @@ class BipedEnv:
         sigma = self.reward_cfg.get("gait_sigma", 0.25)
         return torch.exp(-error / sigma)
 
-    def _reward_actuator_constraint(self):
-        """
-        Reward function that enforces actuator constraints: speed + 3.5*|torque| <= 6.16
-        
-        This prevents motor overheating and ensures realistic operation within hardware limits.
-        The constraint is based on typical servo motor specifications where high speed and 
-        high torque cannot be sustained simultaneously.
-        
-        Returns:
-            Negative reward (penalty) for constraint violations with tolerance
-        """
-        # Get constraint parameters from config
-        constraint_limit = self.reward_cfg.get("actuator_constraint_limit", 6.16)
-        torque_coeff = self.reward_cfg.get("actuator_torque_coeff", 3.5)
-        tolerance = self.reward_cfg.get("actuator_tolerance", 0.5)
-        
-        # Calculate constraint values for all joints: speed + 3.5*|torque|
-        # Using absolute values since the constraint applies in both directions
-        constraint_values = torch.abs(self.dof_vel) + torque_coeff * torch.abs(self.joint_torques)
-        
-        # Calculate violations with tolerance
-        # Only penalize when constraint exceeds (limit + tolerance)
-        target_with_tolerance = constraint_limit + tolerance
-        violations = torch.relu(constraint_values - target_with_tolerance)
-        
-        # Sum violations across all joints for each environment
-        total_violation_per_env = torch.sum(violations, dim=1)
-        
-        # Store violations for monitoring/debugging
-        self.actuator_constraint_violations = total_violation_per_env
-        
-        # Return negative sum of violations (penalty increases with violation magnitude)
-        return -total_violation_per_env
-    
     #############helper functions for domain randomization#############
     def _should_update_randomization(self, randomization_type):
         
