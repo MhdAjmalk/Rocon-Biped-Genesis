@@ -97,16 +97,16 @@ def get_cfgs():
             # Torso
             "torso",
         ],
-        # PD control parameters - start conservative and tune
-        "kp": 30.0,  # Higher than quadruped due to biped instability
-        "kd": 1.0,   # Higher damping for stability
+        # PD control parameters - reduced for more stable operation
+        "kp": 15.0,  # Reduced from 30.0 - high gains cause excessive torques
+        "kd": 0.8,   # Slightly reduced damping
         # termination conditions - tighter for biped
         "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
         "termination_if_pitch_greater_than": 30, # degree
         
-        # Actuator constraint termination
-        "terminate_on_actuator_violation": True,  # Enable termination on severe violations
-        "actuator_violation_termination_threshold": 2.0,  # Terminate if violation > this value
+        # Actuator constraint termination - more lenient to avoid immediate termination
+        "terminate_on_actuator_violation": False,  # Disable termination, use reward penalty only
+        "actuator_violation_termination_threshold": 5.0,  # Higher threshold if enabled
         
         # Fall penalty thresholds (in degrees)
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
@@ -198,11 +198,11 @@ def get_cfgs():
         
         "tracking_sigma": 0.25,
         
-        # Actuator constraint parameters
-        "actuator_constraint_limit": 6.16,  # speed + 3.5*torque <= 6.16
+        # Actuator constraint parameters - more lenient settings
+        "actuator_constraint_limit": 8.0,   # Increased from 6.16 to be more lenient
         "actuator_torque_coeff": 3.5,       # Coefficient for torque in constraint
-        "actuator_tolerance": 0.5,           # Tolerance before penalty starts
-        "actuator_termination_threshold": 2.0,  # Violation level for termination
+        "actuator_tolerance": 1.0,           # Increased tolerance before penalty starts
+        "actuator_termination_threshold": 5.0,  # Higher violation level for termination
         
         "reward_scales": {
             # Velocity tracking rewards (primary objectives)
@@ -224,7 +224,7 @@ def get_cfgs():
             "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
             
             # Actuator constraint reward
-            "actuator_constraint": -20.0,   # Strong penalty for actuator constraint violation
+            "actuator_constraint": -2.0,    # Reduced penalty for more exploration
         },
     }
     

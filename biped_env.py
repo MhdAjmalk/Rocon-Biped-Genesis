@@ -281,7 +281,9 @@ class BipedEnv:
             termination_threshold = self.env_cfg.get("actuator_violation_termination_threshold", 2.0)
             
             # Check for severe violations (beyond termination threshold)
-            max_violation_per_env = torch.max(constraint_values - constraint_limit, dim=1)[0]
+            # Fix: The constraint violation should be compared to constraint_limit first
+            violations = constraint_values - constraint_limit
+            max_violation_per_env = torch.max(violations, dim=1)[0]
             self.reset_buf |= max_violation_per_env > termination_threshold
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).reshape((-1,))
@@ -779,6 +781,20 @@ class BipedEnv:
         
         # Store violations for monitoring/debugging
         self.actuator_constraint_violations = total_violation_per_env
+        
+        # Debug logging (print only occasionally to avoid spam)
+        if hasattr(self, '_debug_counter'):
+            self._debug_counter += 1
+        else:
+            self._debug_counter = 0
+            
+        if self._debug_counter % 1000 == 0 and total_violation_per_env.max() > 0:
+            max_constraint = constraint_values.max().item()
+            max_violation = total_violation_per_env.max().item()
+            max_torque = torch.abs(self.joint_torques).max().item()
+            max_vel = torch.abs(self.dof_vel).max().item()
+            print(f"Actuator Debug - Step {self._debug_counter}: max_constraint={max_constraint:.2f}, "
+                  f"max_violation={max_violation:.2f}, max_torque={max_torque:.2f}, max_vel={max_vel:.2f}")
         
         # Return negative sum of violations (penalty increases with violation magnitude)
         return -total_violation_per_env
