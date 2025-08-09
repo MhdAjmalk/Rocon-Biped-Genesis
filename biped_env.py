@@ -295,9 +295,11 @@ class BipedEnv:
         # compute reward
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
-            rew = reward_func() * self.reward_scales[name]
-            self.rew_buf += rew
-            self.episode_sums[name] += rew
+            # Check if the reward is enabled in the config
+            if self.reward_cfg.get("reward_enables", {}).get(name, True):
+                rew = reward_func() * self.reward_scales[name]
+                self.rew_buf += rew
+                self.episode_sums[name] += rew
         
         # Update FPS tracking in episode sums for logging
         # For FPS, we want the current FPS value, not a sum
