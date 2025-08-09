@@ -117,7 +117,7 @@
     <parent link="fix_lefthip1towaist"/>
     <child link="revolute_left_femur1_1"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="3.7" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="3"/>
   </joint>
   <link name="fix_leftfemur1_2">
     <inertial>
@@ -174,7 +174,7 @@
     <parent link="fix_leftfemur1_2"/>
     <child link="revolute_left_femur2_1"/>
     <axis xyz="0 0 1"/>
-    <limit effort="3.7" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="2" lower="-1.732" upper="1.732" velocity="4.2"/>
   </joint>
   <link name="fix_left_femur2_2">
     <inertial>
@@ -231,7 +231,7 @@
     <parent link="fix_left_femur2_2"/>
     <child link="revolute_left_knee"/>
     <axis xyz="0 0 1"/>
-    <limit effort="5" lower="-2" upper="2" velocity="10"/>
+    <limit effort="1.5" lower="-2" upper="2" velocity="3"/>
   </joint>
   <link name="fix_lefttibia_1">
     <inertial>
@@ -288,7 +288,7 @@
     <parent link="fix_lefttibia_1"/>
     <child link="revolute_leftfoot"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="3"/>
   </joint>
   <link name="fix_lefttibia_2">
     <inertial>
@@ -625,7 +625,7 @@
     <parent link="fix_righthip1towaist"/>
     <child link="revolute_rightfemer1_1"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="3.7" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="3"/>
   </joint>
   <link name="fix_right_femer1_2">
     <inertial>
@@ -682,7 +682,7 @@
     <parent link="fix_right_femer1_2"/>
     <child link="revolute_right_femur2_1"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="3.7" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="2" lower="-1.732" upper="1.732" velocity="4.2"/>
   </joint>
   <link name="fix_right_femur2_2">
     <inertial>
@@ -739,7 +739,7 @@
     <parent link="fix_right_femur2_2"/>
     <child link="revolute_right_knee"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="5" lower="-2" upper="2" velocity="10"/>
+    <limit effort="1.5" lower="-2" upper="2" velocity="3"/>
   </joint>
   <link name="fix_righttibia_1">
     <inertial>
@@ -796,7 +796,7 @@
     <parent link="fix_righttibia_1"/>
     <child link="revolute_rightfoot"/>
     <axis xyz="0 0 -1"/>
-    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="10"/>
+    <limit effort="1.5" lower="-1.732" upper="1.732" velocity="3"/>
   </joint>
   <link name="fix_righttibia_2">
     <inertial>

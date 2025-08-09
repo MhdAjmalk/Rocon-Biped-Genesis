@@ -184,6 +184,29 @@ def get_cfgs():
         "gait_sigma": 0.25,      # The tolerance for the reward. Smaller values are stricter.
         
         "tracking_sigma": 0.25,
+
+        "reward_enables": {
+            # Velocity tracking rewards (primary objectives)
+            "tracking_lin_vel_x": True,     # Track commanded forward velocity
+            "tracking_lin_vel_y": True,     # Track commanded sideways velocity
+            
+            # Stability and regularization rewards
+            "lin_vel_z": True,              # Penalize vertical motion
+            "action_rate": True,            # Smooth actions
+            "similar_to_default": True,     # Stay near neutral pose
+            "alive_bonus": True,            # Alive bonus per step
+            "fall_penalty": True,           # Large penalty for falling
+            "torso_stability": True,        # Torso stability reward
+            "height_maintenance": True,     # Height maintenance
+            
+            # Gait and movement rewards (reduced to prioritize command following)
+            "sinusoidal_gait": True,        # Leg sinusoidal gait
+            "torso_sinusoidal": True,       # Torso sinusoidal motion reward
+            "joint_movement": True,         # Reward for joint movement
+            
+            # Actuator constraint reward
+            "actuator_constraint": False,    # Penalty for actuator constraint violations
+        },
         
         "reward_scales": {
             # Velocity tracking rewards (primary objectives)
