@@ -100,6 +100,7 @@ def get_cfgs():
         # termination conditions - tighter for biped
         "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
         "termination_if_pitch_greater_than": 30, # degree
+        "termination_if_height_below": 0.25,     # meter - terminate if base goes too low
         
         # Fall penalty thresholds (in degrees)
         "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
