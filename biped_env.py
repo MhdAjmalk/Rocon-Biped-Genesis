@@ -484,7 +484,7 @@ class BipedEnv:
                 # Find torso link - try different possible names
                 torso_link = None
                 for link in self.robot.links:
-                    if link.name in ["torso", "base_link", "torso_link", "base", "servo1"]:
+                    if link.name in ["revolute_torso", "base_link", "torso_link", "base", "servo1"]:
                         torso_link = link
                         break
                 

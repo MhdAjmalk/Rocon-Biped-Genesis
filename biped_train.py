@@ -81,7 +81,7 @@ def get_cfgs():
             "left_hip2": -0.652,    # hip flexion/extension
             "left_knee": -1.30,    # knee flexion (negative for left leg)
             "left_ankle": -0.634,   # ankle flexion
-            "torso": 0.0,          # torso rotation
+            "revolute_torso": 0.0,          # torso rotation
         },
         "joint_names": [
             # Right leg first (as per your configuration)
@@ -95,7 +95,7 @@ def get_cfgs():
             "left_knee",
             "left_ankle",
             # Torso
-            "torso",
+            "revolute_torso",
         ],
         # PD control parameters - reduced for more stable operation
         "kp": 15.0,  # Reduced from 30.0 - high gains cause excessive torques
