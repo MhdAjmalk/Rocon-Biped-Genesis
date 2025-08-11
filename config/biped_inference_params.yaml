@@ -1,0 +1,44 @@
+# ROS2 Biped Inference Node Configuration
+# This file contains default parameters for the biped inference node
+
+biped_policy_inference:
+  ros__parameters:
+    # Model parameters
+    experiment_name: "biped-walking"
+    checkpoint: 100
+    device: "cuda"  # or "cpu"
+    logs_root: "./logs"
+    
+    # Control parameters
+    control_frequency: 50.0  # Hz
+    timeout_duration: 1.0    # seconds
+    
+    # Topic timeouts (individual topics)
+    topic_timeouts:
+      imu_data: 0.1       # 100ms
+      joint_states: 0.05  # 50ms
+      cmd_vel: 2.0        # 2 seconds (commands can be less frequent)
+      base_pose: 0.2      # 200ms
+      base_velocity: 0.1  # 100ms
+      left_foot_contact: 0.1   # 100ms
+      right_foot_contact: 0.1  # 100ms
+      gravity_vector: 0.5      # 500ms
+    
+    # Observation scaling (if needed to match training)
+    obs_scales:
+      lin_vel: 2.0
+      ang_vel: 0.25
+      dof_pos: 1.0
+      dof_vel: 0.05
+      base_euler: 1.0
+      base_height: 1.0
+    
+    # Safety limits
+    max_joint_velocity: 10.0  # rad/s
+    max_joint_acceleration: 50.0  # rad/s^2
+    emergency_stop_timeout: 5.0  # seconds
+    
+    # Diagnostics
+    publish_observations: true   # Publish observation vector for debugging
+    publish_diagnostics: true    # Publish status messages
+    diagnostics_frequency: 1.0   # Hz

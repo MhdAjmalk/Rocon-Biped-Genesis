@@ -51,8 +51,15 @@ class BipedEnv:
             show_viewer=show_viewer,
         )
 
-        # add plain
-        self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        # add plane at origin with zero orientation
+        self.scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/plane/plane.urdf",
+                pos=[0.0, 0.0, 0.0],
+                quat=[0.0, 0.0, 0.0, 1.0],  # rpy = (0,0,0)
+                fixed=True
+            )
+        )
 
         # add robot
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)

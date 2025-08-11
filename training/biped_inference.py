@@ -24,7 +24,7 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 
 # This imports the custom environment definition for the bipedal robot.
-from biped_env import BipedEnv
+from training.biped_env import BipedEnv
 
 
 class KeyboardController:

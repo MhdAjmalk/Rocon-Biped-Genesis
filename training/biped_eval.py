@@ -18,7 +18,7 @@ from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
 
-from biped_env import BipedEnv
+from training.biped_env import BipedEnv
 
 
 def main():
