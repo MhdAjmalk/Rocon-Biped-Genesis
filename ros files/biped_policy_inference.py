@@ -109,7 +109,7 @@ class BipedPolicyInference:
         
         # Create a dummy environment to get the policy structure
         # We only need the policy structure, not the full environment
-        from biped_train import get_cfgs
+        from training.biped_train import get_cfgs
         env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
         
         # Create and load the policy
