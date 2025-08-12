@@ -5,14 +5,225 @@ from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transfo
 from genesis.sensors import RigidContactForceGridSensor
 import numpy as np
 import time
+from collections import deque
+from typing import Dict, List, Optional
+import os
+import json
 
 
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
+class PPOMetricsTracker:
+    """Tracks and logs key PPO training metrics."""
+    
+    def __init__(self, log_dir: str = None, buffer_size: int = 1000):
+        self.log_dir = log_dir
+        self.buffer_size = buffer_size
+        
+        # Metric buffers for plotting and analysis
+        self.metrics = {
+            'episode_returns': deque(maxlen=buffer_size),
+            'policy_loss': deque(maxlen=buffer_size),
+            'value_loss': deque(maxlen=buffer_size),
+            'entropy': deque(maxlen=buffer_size),
+            'kl_divergence': deque(maxlen=buffer_size),
+            'episode_lengths': deque(maxlen=buffer_size),
+            'mean_reward_per_step': deque(maxlen=buffer_size),
+            'timesteps': deque(maxlen=buffer_size)
+        }
+        
+        # Current episode tracking
+        self.current_episode_rewards = []
+        self.current_episode_length = 0
+        self.total_timesteps = 0
+        
+        # Summary statistics
+        self.episode_count = 0
+        self.best_episode_return = float('-inf')
+        self.recent_mean_return = 0.0
+        
+        # Create log directory if specified
+        if self.log_dir and not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir, exist_ok=True)
+            
+    def update_episode_data(self, rewards, episode_lengths, dones):
+        """Update episode data from environment step."""
+        # rewards: (num_envs,) tensor
+        # episode_lengths: (num_envs,) tensor  
+        # dones: (num_envs,) tensor of bools
+        
+        for i, done in enumerate(dones):
+            if done:
+                episode_return = rewards[i].item() * episode_lengths[i].item()  # Total episode return
+                episode_length = episode_lengths[i].item()
+                
+                self.metrics['episode_returns'].append(episode_return)
+                self.metrics['episode_lengths'].append(episode_length)
+                self.metrics['mean_reward_per_step'].append(episode_return / max(episode_length, 1))
+                self.metrics['timesteps'].append(self.total_timesteps)
+                
+                self.episode_count += 1
+                
+                # Update best episode return
+                if episode_return > self.best_episode_return:
+                    self.best_episode_return = episode_return
+                    
+                # Update recent mean return (last 100 episodes)
+                recent_returns = list(self.metrics['episode_returns'])[-100:]
+                self.recent_mean_return = np.mean(recent_returns) if recent_returns else 0.0
+                
+        self.total_timesteps += len(rewards)
+        
+    def update_ppo_metrics(self, policy_loss: float, value_loss: float, 
+                          entropy: float, kl_divergence: float):
+        """Update PPO-specific training metrics."""
+        self.metrics['policy_loss'].append(policy_loss)
+        self.metrics['value_loss'].append(value_loss)
+        self.metrics['entropy'].append(entropy)
+        self.metrics['kl_divergence'].append(kl_divergence)
+        
+    def get_recent_stats(self, window_size: int = 100) -> Dict:
+        """Get recent statistics for all metrics."""
+        stats = {}
+        
+        for metric_name, values in self.metrics.items():
+            recent_values = list(values)[-window_size:]
+            if recent_values:
+                stats[f'{metric_name}_mean'] = np.mean(recent_values)
+                stats[f'{metric_name}_std'] = np.std(recent_values)
+                stats[f'{metric_name}_min'] = np.min(recent_values)
+                stats[f'{metric_name}_max'] = np.max(recent_values)
+                
+        return stats
+        
+    def print_summary(self):
+        """Print current training summary."""
+        if not self.metrics['episode_returns']:
+            return
+            
+        recent_stats = self.get_recent_stats(window_size=100)
+        
+        print("\n" + "="*60)
+        print("PPO TRAINING METRICS SUMMARY")
+        print("="*60)
+        print(f"Total Episodes: {self.episode_count}")
+        print(f"Total Timesteps: {self.total_timesteps}")
+        print(f"Best Episode Return: {self.best_episode_return:.3f}")
+        print(f"Recent Mean Return (100ep): {self.recent_mean_return:.3f}")
+        
+        if 'episode_returns_mean' in recent_stats:
+            print(f"\nRecent Episode Returns:")
+            print(f"  Mean: {recent_stats['episode_returns_mean']:.3f}")
+            print(f"  Std:  {recent_stats['episode_returns_std']:.3f}")
+            
+        if 'policy_loss_mean' in recent_stats:
+            print(f"\nPPO Metrics:")
+            print(f"  Policy Loss:   {recent_stats['policy_loss_mean']:.6f}")
+            print(f"  Value Loss:    {recent_stats['value_loss_mean']:.6f}")
+            print(f"  Entropy:       {recent_stats['entropy_mean']:.6f}")
+            print(f"  KL Divergence: {recent_stats['kl_divergence_mean']:.6f}")
+            
+        print("="*60)
+        
+    def plot_metrics(self, save_path: str = None):
+        """Plot training metrics."""
+        if not self.metrics['episode_returns']:
+            print("No data to plot yet.")
+            return
+            
+        # Use matplotlib backend that doesn't require display
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+            
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle('PPO Training Metrics', fontsize=16)
+        
+        # Episode Returns
+        if self.metrics['episode_returns']:
+            axes[0, 0].plot(list(self.metrics['episode_returns']))
+            axes[0, 0].set_title('Episode Returns')
+            axes[0, 0].set_xlabel('Episode')
+            axes[0, 0].set_ylabel('Return')
+            axes[0, 0].grid(True)
+            
+        # Policy Loss
+        if self.metrics['policy_loss']:
+            axes[0, 1].plot(list(self.metrics['policy_loss']))
+            axes[0, 1].set_title('Policy Loss')
+            axes[0, 1].set_xlabel('Update')
+            axes[0, 1].set_ylabel('Loss')
+            axes[0, 1].grid(True)
+            
+        # Value Loss
+        if self.metrics['value_loss']:
+            axes[0, 2].plot(list(self.metrics['value_loss']))
+            axes[0, 2].set_title('Value Loss')
+            axes[0, 2].set_xlabel('Update')
+            axes[0, 2].set_ylabel('Loss')
+            axes[0, 2].grid(True)
+            
+        # Entropy
+        if self.metrics['entropy']:
+            axes[1, 0].plot(list(self.metrics['entropy']))
+            axes[1, 0].set_title('Entropy')
+            axes[1, 0].set_xlabel('Update')
+            axes[1, 0].set_ylabel('Entropy')
+            axes[1, 0].grid(True)
+            
+        # KL Divergence
+        if self.metrics['kl_divergence']:
+            axes[1, 1].plot(list(self.metrics['kl_divergence']))
+            axes[1, 1].set_title('KL Divergence')
+            axes[1, 1].set_xlabel('Update')
+            axes[1, 1].set_ylabel('KL Div')
+            axes[1, 1].grid(True)
+            
+        # Episode Length
+        if self.metrics['episode_lengths']:
+            axes[1, 2].plot(list(self.metrics['episode_lengths']))
+            axes[1, 2].set_title('Episode Lengths')
+            axes[1, 2].set_xlabel('Episode')
+            axes[1, 2].set_ylabel('Steps')
+            axes[1, 2].grid(True)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Metrics plot saved to: {save_path}")
+            plt.close()  # Close to free memory
+        else:
+            plt.show()
+            
+    def save_metrics(self, filepath: str = None):
+        """Save metrics to file."""
+        if not filepath and self.log_dir:
+            filepath = os.path.join(self.log_dir, "ppo_metrics.json")
+        elif not filepath:
+            filepath = "ppo_metrics.json"
+            
+        # Convert deques to lists for JSON serialization
+        metrics_data = {
+            'metrics': {key: list(values) for key, values in self.metrics.items()},
+            'summary': {
+                'episode_count': self.episode_count,
+                'total_timesteps': self.total_timesteps,
+                'best_episode_return': self.best_episode_return,
+                'recent_mean_return': self.recent_mean_return
+            }
+        }
+        
+        import json
+        with open(filepath, 'w') as f:
+            json.dump(metrics_data, f, indent=2)
+        print(f"Metrics saved to: {filepath}")
+
+
 class BipedEnv:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, log_dir=None):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = None
@@ -31,6 +242,13 @@ class BipedEnv:
 
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = reward_cfg["reward_scales"]
+
+        # Initialize PPO metrics tracker
+        self.metrics_tracker = PPOMetricsTracker(log_dir=log_dir, buffer_size=2000)
+        
+        # Metrics logging interval
+        self.metrics_log_interval = 100  # Print summary every 100 episodes
+        self.last_metrics_log_episode = 0
 
         # create scene
         self.scene = gs.Scene(
@@ -197,6 +415,39 @@ class BipedEnv:
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
 
+    def update_ppo_metrics(self, policy_loss: float, value_loss: float, entropy: float, kl_divergence: float):
+        """Update PPO training metrics. Called from training loop."""
+        self.metrics_tracker.update_ppo_metrics(policy_loss, value_loss, entropy, kl_divergence)
+        
+        # Also store in extras for RSL-RL compatibility
+        if "ppo_metrics" not in self.extras:
+            self.extras["ppo_metrics"] = {}
+            
+        self.extras["ppo_metrics"]["policy_loss"] = policy_loss
+        self.extras["ppo_metrics"]["value_loss"] = value_loss  
+        self.extras["ppo_metrics"]["entropy"] = entropy
+        self.extras["ppo_metrics"]["kl_divergence"] = kl_divergence
+        
+    def get_metrics_summary(self) -> Dict:
+        """Get current metrics summary."""
+        return self.metrics_tracker.get_recent_stats()
+        
+    def save_final_metrics(self):
+        """Save final metrics at end of training."""
+        if self.metrics_tracker.log_dir:
+            self.metrics_tracker.save_metrics()
+            plot_path = os.path.join(self.metrics_tracker.log_dir, "final_training_metrics.png")
+            try:
+                self.metrics_tracker.plot_metrics(save_path=plot_path)
+                print("Final training metrics saved!")
+            except Exception as e:
+                print(f"Warning: Could not save final plot: {e}")
+        
+        # Print final summary
+        print("\n" + "="*60)
+        print("FINAL TRAINING SUMMARY")
+        self.metrics_tracker.print_summary()
+
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), gs.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), gs.device)
@@ -298,6 +549,29 @@ class BipedEnv:
         self.extras["time_outs"][time_out_idx] = 1.0
 
         self.reset_idx(self.reset_buf.nonzero(as_tuple=False).reshape((-1,)))
+
+        # Update PPO metrics tracker with episode data
+        if self.reset_buf.any():
+            # Update metrics for completed episodes
+            self.metrics_tracker.update_episode_data(
+                self.rew_buf, 
+                self.episode_length_buf, 
+                self.reset_buf
+            )
+            
+            # Print metrics summary periodically
+            if self.metrics_tracker.episode_count - self.last_metrics_log_episode >= self.metrics_log_interval:
+                self.metrics_tracker.print_summary()
+                self.last_metrics_log_episode = self.metrics_tracker.episode_count
+                
+                # Save metrics and plot
+                if self.metrics_tracker.log_dir:
+                    self.metrics_tracker.save_metrics()
+                    plot_path = os.path.join(self.metrics_tracker.log_dir, "training_metrics.png")
+                    try:
+                        self.metrics_tracker.plot_metrics(save_path=plot_path)
+                    except Exception as e:
+                        print(f"Warning: Could not save plot: {e}")
 
         # compute reward
         self.rew_buf[:] = 0.0
