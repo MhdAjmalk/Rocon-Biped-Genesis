@@ -86,8 +86,8 @@ class BipedROS2InferenceNode(Node):
             'imu_data': None,
             'joint_states': None,
             'cmd_vel': None,
-            'base_pose': None,
-            'base_velocity': None,
+            'base_linear_velocity': None,
+            'base_angular_velocity': None,
             'left_foot_contact': None,
             'right_foot_contact': None,
             'gravity_vector': None,
@@ -114,6 +114,7 @@ class BipedROS2InferenceNode(Node):
         )
         
         # Subscribers
+        # --- MODIFIED SUBSCRIBERS ---
         self.subscribers = {}
         self.subscribers['imu'] = self.create_subscription(
             Imu, '/imu/data', self.imu_callback, sensor_qos)
@@ -121,16 +122,19 @@ class BipedROS2InferenceNode(Node):
             JointState, '/joint_states', self.joint_states_callback, sensor_qos)
         self.subscribers['cmd_vel'] = self.create_subscription(
             Twist, '/cmd_vel', self.cmd_vel_callback, reliable_qos)
-        self.subscribers['base_pose'] = self.create_subscription(
-            PoseWithCovarianceStamped, '/robot_state/base_pose', self.base_pose_callback, sensor_qos)
-        self.subscribers['base_velocity'] = self.create_subscription(
-            TwistStamped, '/robot_state/base_velocity', self.base_velocity_callback, sensor_qos)
+        
+        # ADDING SEPARATE VELOCITY SUBSCRIBERS
+        self.subscribers['base_linear_velocity'] = self.create_subscription(
+            Vector3Stamped, '/biped/velocity/linear', self.base_linear_velocity_callback, sensor_qos)
+        self.subscribers['base_angular_velocity'] = self.create_subscription(
+            Vector3Stamped, '/biped/velocity/angular', self.base_angular_velocity_callback, sensor_qos)
+
         self.subscribers['left_foot_contact'] = self.create_subscription(
             Bool, '/contact_sensors/left_foot', self.left_foot_contact_callback, sensor_qos)
         self.subscribers['right_foot_contact'] = self.create_subscription(
             Bool, '/contact_sensors/right_foot', self.right_foot_contact_callback, sensor_qos)
         self.subscribers['gravity_vector'] = self.create_subscription(
-            Vector3Stamped, '/gravity_vector', self.gravity_vector_callback, sensor_qos)
+            Vector3Stamped, '/biped/gravity/projected_base_frame', self.gravity_vector_callback, sensor_qos)
         
         # Publishers
         self.motor_cmd_pub = self.create_publisher(JointState, '/motor_commands', reliable_qos)
@@ -183,18 +187,17 @@ class BipedROS2InferenceNode(Node):
             self.obs_buffer['cmd_vel'] = msg
             self.obs_timestamps['cmd_vel'] = self.get_clock().now()
     
-    def base_pose_callback(self, msg: PoseWithCovarianceStamped):
-        """Handle base pose data."""
+    def base_linear_velocity_callback(self, msg: Vector3Stamped):
+        """Handle base linear velocity data."""
         with self.obs_lock:
-            self.obs_buffer['base_pose'] = msg
-            self.obs_timestamps['base_pose'] = self.get_clock().now()
-    
-    def base_velocity_callback(self, msg: TwistStamped):
-        """Handle base velocity data."""
+            self.obs_buffer['base_linear_velocity'] = msg
+            self.obs_timestamps['base_linear_velocity'] = self.get_clock().now()
+
+    def base_angular_velocity_callback(self, msg: Vector3Stamped):
+        """Handle base angular velocity data."""
         with self.obs_lock:
-            self.obs_buffer['base_velocity'] = msg
-            self.obs_timestamps['base_velocity'] = self.get_clock().now()
-    
+            self.obs_buffer['base_angular_velocity'] = msg
+            self.obs_timestamps['base_angular_velocity'] = self.get_clock().now()    
     def left_foot_contact_callback(self, msg: Bool):
         """Handle left foot contact data."""
         with self.obs_lock:
@@ -218,7 +221,9 @@ class BipedROS2InferenceNode(Node):
         current_time = self.get_clock().now()
         timeout_ns = int(self.timeout_duration * 1e9)
         
-        required_topics = ['imu_data', 'joint_states', 'cmd_vel']
+        required_topics = ['imu_data', 'joint_states', 'cmd_vel',
+                           'base_linear_velocity', 'base_angular_velocity'
+        ]
         
         for topic in required_topics:
             if self.obs_timestamps[topic] is None:
@@ -229,29 +234,6 @@ class BipedROS2InferenceNode(Node):
                 return False
         
         return True
-    
-    def quaternion_to_euler(self, quat):
-        """Convert quaternion to euler angles (roll, pitch, yaw)."""
-        x, y, z, w = quat.x, quat.y, quat.z, quat.w
-        
-        # Roll (x-axis rotation)
-        sinr_cosp = 2 * (w * x + y * z)
-        cosr_cosp = 1 - 2 * (x * x + y * y)
-        roll = np.arctan2(sinr_cosp, cosr_cosp)
-        
-        # Pitch (y-axis rotation)
-        sinp = 2 * (w * y - z * x)
-        if abs(sinp) >= 1:
-            pitch = np.copysign(np.pi / 2, sinp)
-        else:
-            pitch = np.arcsin(sinp)
-        
-        # Yaw (z-axis rotation)
-        siny_cosp = 2 * (w * z + x * y)
-        cosy_cosp = 1 - 2 * (y * y + z * z)
-        yaw = np.arctan2(siny_cosp, cosy_cosp)
-        
-        return roll, pitch, yaw
     
     def build_observation_vector(self) -> Optional[np.ndarray]:
         """
@@ -279,44 +261,22 @@ class BipedROS2InferenceNode(Node):
         try:
             observation = []
             
-            # Base linear velocity (3) - from base_velocity or default
-            if obs_data['base_velocity'] is not None:
-                twist = obs_data['base_velocity'].twist
-                observation.extend([twist.linear.x, twist.linear.y, twist.linear.z])
-            else:
-                observation.extend([0.0, 0.0, 0.0])
+            # --- MODIFIED: Use new separate velocity sources ---
+            # Base linear velocity (3)
+            linear_vel = obs_data['base_linear_velocity'].vector
+            observation.extend([linear_vel.x, linear_vel.y, linear_vel.z])
             
-            # Base angular velocity (3) - from IMU
-            if obs_data['imu_data'] is not None:
-                angular_vel = obs_data['imu_data'].angular_velocity
-                observation.extend([angular_vel.x, angular_vel.y, angular_vel.z])
-            else:
-                observation.extend([0.0, 0.0, 0.0])
+            # Base angular velocity (3)
+            angular_vel = obs_data['base_angular_velocity'].vector
+            observation.extend([angular_vel.x, angular_vel.y, angular_vel.z])
             
-            # Projected gravity (3) - from gravity_vector or IMU orientation
-            if obs_data['gravity_vector'] is not None:
-                gravity = obs_data['gravity_vector'].vector
-                observation.extend([gravity.x, gravity.y, gravity.z])
-            elif obs_data['imu_data'] is not None:
-                # Calculate projected gravity from orientation
-                quat = obs_data['imu_data'].orientation
-                roll, pitch, yaw = self.quaternion_to_euler(quat)
-                # Project global gravity [0, 0, -1] into body frame
-                gravity_body = [
-                    -np.sin(pitch),
-                    np.sin(roll) * np.cos(pitch), 
-                    -np.cos(roll) * np.cos(pitch)
-                ]
-                observation.extend(gravity_body)
-            else:
-                observation.extend([0.0, 0.0, -1.0])  # Default gravity
+            # Projected gravity (3)
+            gravity = obs_data['gravity_vector'].vector
+            observation.extend([gravity.x, gravity.y, gravity.z])
             
-            # Commands (3) - from cmd_vel
-            if obs_data['cmd_vel'] is not None:
-                cmd = obs_data['cmd_vel']
-                observation.extend([cmd.linear.x, cmd.linear.y, cmd.angular.z])
-            else:
-                observation.extend([0.0, 0.0, 0.0])
+            # Commands (3)
+            cmd = obs_data['cmd_vel']
+            observation.extend([cmd.linear.x, cmd.linear.y, cmd.angular.z])
             
             # Joint positions (9) and velocities (9)
             if obs_data['joint_states'] is not None:
@@ -355,13 +315,13 @@ class BipedROS2InferenceNode(Node):
             # Convert to numpy array and check size
             obs_array = np.array(observation, dtype=np.float32)
             
-            if len(obs_array) != 38:
+            if len(obs_array) != 41:
                 self.get_logger().warning(f"Observation size mismatch: expected 38, got {len(obs_array)}")
                 # Pad or trim to expected size
-                if len(obs_array) < 38:
-                    obs_array = np.pad(obs_array, (0, 38 - len(obs_array)))
+                if len(obs_array) < 41:
+                    obs_array = np.pad(obs_array, (0, 41 - len(obs_array)))
                 else:
-                    obs_array = obs_array[:38]
+                    obs_array = obs_array[:41]
             
             return obs_array
             
