@@ -3,28 +3,31 @@
 ROS2 Biped Policy Inference Node
 
 This node integrates the trained biped policy with ROS2 Humble by subscribing to
-various standard ROS2 message topics for observations and publishing motor commands.
+various sensor topics and publishing motor commands. It acts as the bridge
+between the robot's hardware/sensor drivers and the machine learning model.
 
 Subscribed Topics:
-    /imu/data (sensor_msgs/Imu): IMU data for angular velocity and orientation
-    /joint_states (sensor_msgs/JointState): Current joint positions and velocities
-    /cmd_vel (geometry_msgs/Twist): Velocity commands
-    /robot_state/base_pose (geometry_msgs/PoseWithCovarianceStamped): Base position/orientation
-    /robot_state/base_velocity (geometry_msgs/TwistStamped): Base linear/angular velocity
-    /contact_sensors/left_foot (std_msgs/Bool): Left foot contact state
-    /contact_sensors/right_foot (std_msgs/Bool): Right foot contact state
-    /gravity_vector (geometry_msgs/Vector3Stamped): Projected gravity vector
+    /imu/data (sensor_msgs/Imu): IMU data for orientation and angular velocity.
+    /joint_states (sensor_msgs/JointState): Current joint positions and velocities from motor encoders.
+    /cmd_vel (geometry_msgs/Twist): Velocity commands from a joystick or planner.
+    /vrpn_mocap/base_link/pose (geometry_msgs/PoseStamped): Raw pose from motion capture for Z-height.
+    /biped/velocity/linear (geometry_msgs/Vector3Stamped): Base linear velocity from the mocap_relay node.
+    /biped/velocity/angular (geometry_msgs/Vector3Stamped): Base angular velocity from the mocap_relay node.
+    /contact_sensors/left_foot (std_msgs/Bool): Left foot contact state.
+    /contact_sensors/right_foot (std_msgs/Bool): Right foot contact state.
+    /biped/gravity/projected_base_frame (geometry_msgs/Vector3Stamped): Projected gravity vector from the mocap_relay node.
 
 Published Topics:
-    /motor_commands (sensor_msgs/JointState): Motor position commands
-    /policy_diagnostics (std_msgs/String): Policy status and diagnostics
+    /motor_commands (sensor_msgs/JointState): Target motor position commands for the robot's controllers.
+    /policy_diagnostics (std_msgs/String): JSON-formatted status and diagnostics information.
+    /policy_observations (std_msgs/Float64MultiArray): The full observation vector being sent to the policy (for debugging).
 
 Parameters:
-    experiment_name: Name of the trained experiment
-    checkpoint: Model checkpoint to load
-    device: Inference device ("cuda" or "cpu")
-    control_frequency: Control loop frequency in Hz
-    timeout_duration: Maximum time to wait for observations before timeout
+    experiment_name: Name of the trained experiment.
+    checkpoint: Model checkpoint to load.
+    device: Inference device ("cuda" or "cpu").
+    control_frequency: Control loop frequency in Hz.
+    timeout_duration: Maximum time to wait for observations before timeout.
 """
 
 import rclpy
