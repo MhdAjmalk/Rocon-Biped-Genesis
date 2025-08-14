@@ -39,7 +39,7 @@ import time
 
 # ROS2 message types
 from sensor_msgs.msg import Imu, JointState
-from geometry_msgs.msg import Twist, PoseWithCovarianceStamped, TwistStamped, Vector3Stamped
+from geometry_msgs.msg import Twist, PoseStamped, TwistStamped, Vector3Stamped
 from std_msgs.msg import Bool, String, Float64MultiArray
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
@@ -88,6 +88,7 @@ class BipedROS2InferenceNode(Node):
             'cmd_vel': None,
             'base_linear_velocity': None,
             'base_angular_velocity': None,
+            'base_height': None,  # New field for Z-height from mocap
             'left_foot_contact': None,
             'right_foot_contact': None,
             'gravity_vector': None,
@@ -128,7 +129,12 @@ class BipedROS2InferenceNode(Node):
             Vector3Stamped, '/biped/velocity/linear', self.base_linear_velocity_callback, sensor_qos)
         self.subscribers['base_angular_velocity'] = self.create_subscription(
             Vector3Stamped, '/biped/velocity/angular', self.base_angular_velocity_callback, sensor_qos)
+        
+        # New subscriber for mocap pose to get Z-height
+        self.subscribers['base_pose'] = self.create_subscription(
+            PoseStamped, '/vrpn_mocap/base_link/pose', self.base_pose_callback, sensor_qos)
 
+        # Contact sensors
         self.subscribers['left_foot_contact'] = self.create_subscription(
             Bool, '/contact_sensors/left_foot', self.left_foot_contact_callback, sensor_qos)
         self.subscribers['right_foot_contact'] = self.create_subscription(
@@ -198,6 +204,14 @@ class BipedROS2InferenceNode(Node):
         with self.obs_lock:
             self.obs_buffer['base_angular_velocity'] = msg
             self.obs_timestamps['base_angular_velocity'] = self.get_clock().now()    
+    
+    def base_pose_callback(self, msg: PoseStamped):
+        """Handle incoming pose data to extract Z-height."""
+        with self.obs_lock:
+            # We only need the z-position for the observation vector
+            self.obs_buffer['base_height'] = msg.pose.position.z
+            self.obs_timestamps['base_height'] = self.get_clock().now()
+
     def left_foot_contact_callback(self, msg: Bool):
         """Handle left foot contact data."""
         with self.obs_lock:
@@ -222,7 +236,8 @@ class BipedROS2InferenceNode(Node):
         timeout_ns = int(self.timeout_duration * 1e9)
         
         required_topics = ['imu_data', 'joint_states', 'cmd_vel',
-                           'base_linear_velocity', 'base_angular_velocity'
+                           'base_linear_velocity', 'base_angular_velocity',
+                           'base_height'
         ]
         
         for topic in required_topics:
@@ -237,91 +252,78 @@ class BipedROS2InferenceNode(Node):
     
     def build_observation_vector(self) -> Optional[np.ndarray]:
         """
-        Build the observation vector from ROS messages.
-        
-        Observation structure (38 dimensions total):
-        - Base linear velocity (3): [vx, vy, vz]
-        - Base angular velocity (3): [wx, wy, wz] 
-        - Projected gravity (3): [gx, gy, gz]
-        - Commands (3): [cmd_vx, cmd_vy, cmd_wz]
-        - Joint positions (9): [joint_pos_0, ..., joint_pos_8]
-        - Joint velocities (9): [joint_vel_0, ..., joint_vel_8]
-        - Last actions (9): [last_action_0, ..., last_action_8]
-        - Foot contacts (2): [left_contact, right_contact]
-        Total: 3+3+3+3+9+9+9+2 = 41 -> but we use 38 based on your config
+        Build the 38-dimension observation vector exactly as defined in biped_env.py.
         """
-        
         with self.obs_lock:
             obs_data = self.obs_buffer.copy()
         
-        # Check if we have the minimum required data
         if not self.check_data_freshness():
             return None
         
         try:
-            observation = []
-            
-            # --- MODIFIED: Use new separate velocity sources ---
-            # Base linear velocity (3)
-            linear_vel = obs_data['base_linear_velocity'].vector
-            observation.extend([linear_vel.x, linear_vel.y, linear_vel.z])
-            
-            # Base angular velocity (3)
-            angular_vel = obs_data['base_angular_velocity'].vector
-            observation.extend([angular_vel.x, angular_vel.y, angular_vel.z])
-            
-            # Projected gravity (3)
-            gravity = obs_data['gravity_vector'].vector
-            observation.extend([gravity.x, gravity.y, gravity.z])
-            
-            # Commands (3)
+            # --- Base/Torso Observations (11 dimensions) ---
+            # 1. Base pitch/roll angle (from IMU)
+            imu = obs_data['imu_data']
+            # This is a simplified conversion. A more robust one might be needed.
+            # For now, assuming a simple mapping. You may need a full quat-to-euler function.
+            roll = np.arctan2(2 * (imu.orientation.w * imu.orientation.x + imu.orientation.y * imu.orientation.z), 1 - 2 * (imu.orientation.x**2 + imu.orientation.y**2))
+            pitch = np.arcsin(2 * (imu.orientation.w * imu.orientation.y - imu.orientation.z * imu.orientation.x))
+            base_euler = [roll, pitch] # (2)
+
+            # 2. Base pitch/roll/yaw velocity (from mocap velocity)
+            ang_vel = obs_data['base_angular_velocity'].vector
+            base_ang_vel = [ang_vel.x, ang_vel.y, ang_vel.z] # (3)
+
+            # 3. Base linear velocity X,Y (from mocap velocity)
+            lin_vel = obs_data['base_linear_velocity'].vector
+            base_lin_vel = [lin_vel.x, lin_vel.y] # (2)
+
+            # 4. Base height (from mocap position)
+            base_height = [obs_data['base_height']] # (1)
+
+            # 5. Commands (from /cmd_vel)
             cmd = obs_data['cmd_vel']
-            observation.extend([cmd.linear.x, cmd.linear.y, cmd.angular.z])
+            commands = [cmd.linear.x, cmd.linear.y, cmd.angular.z] # (3)
+
+            # --- Joint Observations (18 dimensions) ---
+            joint_msg = obs_data['joint_states']
+            joint_positions = np.zeros(9)
+            joint_velocities = np.zeros(9)
+            for i, joint_name in enumerate(self.joint_names):
+                try:
+                    idx = joint_msg.name.index(joint_name)
+                    if idx < len(joint_msg.position): joint_positions[i] = joint_msg.position[idx]
+                    if idx < len(joint_msg.velocity): joint_velocities[i] = joint_msg.velocity[idx]
+                except ValueError:
+                    pass # Keep default zero if joint not found
             
-            # Joint positions (9) and velocities (9)
-            if obs_data['joint_states'] is not None:
-                joint_msg = obs_data['joint_states']
-                
-                # Initialize arrays
-                joint_positions = np.zeros(9)
-                joint_velocities = np.zeros(9)
-                
-                # Map joint states to our expected order
-                for i, joint_name in enumerate(self.joint_names):
-                    try:
-                        idx = joint_msg.name.index(joint_name)
-                        if idx < len(joint_msg.position):
-                            joint_positions[i] = joint_msg.position[idx]
-                        if idx < len(joint_msg.velocity):
-                            joint_velocities[i] = joint_msg.velocity[idx]
-                    except ValueError:
-                        # Joint not found, use default value
-                        pass
-                
-                observation.extend(joint_positions.tolist())
-                observation.extend(joint_velocities.tolist())
-            else:
-                # Default joint states
-                observation.extend([0.0] * 18)  # 9 positions + 9 velocities
-            
-            # Last actions (9)
-            observation.extend(obs_data['last_actions'].tolist())
-            
-            # Foot contacts (2)
+            # --- Other Observations (11 dimensions) ---
+            # 9. Last actions
+            last_actions = obs_data['last_actions'].tolist() # (9)
+
+            # 10. Foot contacts
             left_contact = 1.0 if (obs_data['left_foot_contact'] and obs_data['left_foot_contact'].data) else 0.0
             right_contact = 1.0 if (obs_data['right_foot_contact'] and obs_data['right_foot_contact'].data) else 0.0
-            observation.extend([left_contact, right_contact])
+            foot_contacts = [left_contact, right_contact] # (2)
+
+            # --- Assemble Final Vector (38 dimensions) ---
+            observation = (
+                base_euler +          # 2
+                base_ang_vel +        # 3
+                base_lin_vel +        # 2
+                base_height +         # 1
+                commands +            # 3
+                joint_positions.tolist() + # 9
+                joint_velocities.tolist() +# 9
+                last_actions +        # 9
+                foot_contacts         # 2
+            )
             
-            # Convert to numpy array and check size
             obs_array = np.array(observation, dtype=np.float32)
-            
-            if len(obs_array) != 41:
+
+            if len(obs_array) != 38:
                 self.get_logger().warning(f"Observation size mismatch: expected 38, got {len(obs_array)}")
-                # Pad or trim to expected size
-                if len(obs_array) < 41:
-                    obs_array = np.pad(obs_array, (0, 41 - len(obs_array)))
-                else:
-                    obs_array = obs_array[:41]
+                return None
             
             return obs_array
             
