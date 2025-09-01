@@ -15,11 +15,21 @@ try:
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
     raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
-from rsl_rl.runners import OnPolicyRunner
+# Import WandB runner instead of standard OnPolicyRunner
+try:
+    from wandb_runner import WandbOnPolicyRunner
+    WANDB_AVAILABLE = True
+    print("✅ WandB integration available")
+except ImportError as e:
+    from rsl_rl.runners import OnPolicyRunner
+    WandbOnPolicyRunner = OnPolicyRunner
+    WANDB_AVAILABLE = False
+    print(f"⚠️ WandB integration not available: {e}")
+    print("   Training will continue without WandB logging")
 
 import genesis as gs
 
-from biped_env_main import BipedEnv
+from biped_env import BipedEnv
 
 
 def get_train_cfg(exp_name, max_iterations):
@@ -117,15 +127,18 @@ def get_cfgs():
         "simulate_action_latency": True,
         "clip_actions": 100.0,
         
+        # Binary contact threshold for observations
+        "binary_contact_threshold": 0.1,  # Force threshold for binary contact detection in observations (N)
+        
         # Domain Randomization Configuration
         "domain_rand": {
-            "randomize_friction":True,  # Disabled until Genesis API support is confirmed
+            "randomize_friction":False,  # Disabled until Genesis API support is confirmed
             "friction_range": [0.4, 1.25],  # Range for friction coefficient
 
             "randomize_mass": False,  # Disabled until torso link is properly identified
             "added_mass_range": [0.0, 0.4], # kg to add or remove from torso
 
-            "randomize_motor_strength": True,  # This is working correctly
+            "randomize_motor_strength": False,  # This is working correctly
             "motor_strength_range": [0.6, 1.2], # Scale factor for kp
 
             "push_robot": False,  # Disabled - external force application removed
@@ -133,11 +146,11 @@ def get_cfgs():
             "max_push_vel_xy": 1.0, # m/s (disabled)
             
             # Motor Backlash Configuration
-            "add_motor_backlash": True ,
+            "add_motor_backlash": False ,
             "backlash_range": [0.01, 0.07],  # Backlash angle range in radians (0.5-3 degrees)
             
             # Sensor Noise Configuration
-            "add_observation_noise": True ,
+            "add_observation_noise": False ,
             "noise_scales": {
                 "dof_pos": 0.02,    # Noise stddev for joint positions (rad)
                 "dof_vel": 0.2,     # Noise stddev for joint velocities (rad/s)
@@ -161,7 +174,7 @@ def get_cfgs():
     }
     
     obs_cfg = {
-        "num_obs": 37,  # Adjusted for 8 joints: 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37 (removed torso joint, adjusted last_actions)
+        "num_obs": 37,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37: base(8) + commands(3) + joints(16) + contacts(2) + actions(8)
         "obs_scales": {
             "lin_vel": 2.0,      # Scaling for linear velocities in observations
             "ang_vel": 0.25,     # Scaling for angular velocities in observations
@@ -178,7 +191,7 @@ def get_cfgs():
         "feet_height_target": 0.1,  # Ground clearance during swing
         
         # New reward parameters
-        "forward_velocity_target": 0.5,
+        # "forward_velocity_target": 0.5,
         "stability_factor": 1.0,  # Torso stability smoothness factor
         "height_target": 0.25,  # Height maintenance target for neutral pose
         "movement_threshold": 2.0,  # Maximum movement reward threshold
@@ -209,28 +222,44 @@ def get_cfgs():
             # Stability and regularization rewards
             "lin_vel_z": -2.0,              # Penalize vertical motion
             "action_rate": -0.02,           # Smooth actions
-            "similar_to_default": -0.1,     # Stay near neutral pose
+            "similar_to_default": -0.05,     # Stay near neutral pose
             "alive_bonus": 0.5,             # Alive bonus per step
             "fall_penalty": -100.0,         # Large penalty for falling
             "torso_stability": 5.0,         # Torso stability reward
-            "height_maintenance": -2.0,     # Height maintenance
+            # "height_maintenance": -2.0,     # Height maintenance
+            
+                        # Gait and movement rewards (reduced to prioritize command following)
+            # "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
+            "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
+        },
+        
+        # Enable/disable reward functions using if True/False
+        "reward_enables": {
+            # Velocity tracking rewards (primary objectives)
+            "tracking_lin_vel_x": True,     # Track commanded forward velocity
+            "tracking_lin_vel_y": True,     # Track commanded sideways velocity
+            
+            # Stability and regularization rewards
+            "lin_vel_z": True,              # Penalize vertical motion
+            "action_rate": True,            # Smooth actions
+            "similar_to_default": True,     # Stay near neutral pose
+            "alive_bonus": True,            # Alive bonus per step
+            "fall_penalty": True,           # Large penalty for falling
+            "torso_stability": True,        # Torso stability reward
+            "height_maintenance": True,     # Height maintenance
             
             # Gait and movement rewards (reduced to prioritize command following)
-            "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
-            "torso_sinusoidal": 0.0,        # Torso sinusoidal motion reward - DISABLED (no torso joint)
-            "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
-            
-            # Actuator constraint reward
-            "actuator_constraint": -20.0,   # Strong penalty for actuator constraint violation
+            # "sinusoidal_gait": True,        # Leg sinusoidal gait
+            "joint_movement": True,         # Reward for joint movement
         },
     }
     
     command_cfg = {
         "num_commands": 3,
         # Command range for forward velocity (m/s) - progressive training
-        "lin_vel_x_range": [-0.5, 1.0],    # Forward/backward velocity range
+        "lin_vel_x_range": [-1.5, 1.5],    # Forward/backward velocity range
         # Command range for sideways velocity (m/s)
-        "lin_vel_y_range": [-0.3, 0.3],    # Left/right velocity range  
+        "lin_vel_y_range": [0.0, 0.0],    # Left/right velocity range  
         # Command range for angular velocity (rad/s) - keep zero for now
         "ang_vel_range": [0.0, 0.0],       # No turning for now, focus on linear motion
     }
@@ -244,6 +273,17 @@ def main():
     # Increased default batch size for better GPU utilization with optimized environment
     parser.add_argument("-B", "--num_envs", type=int, default=1024)  # Increased from 1 for performance
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
+    
+    # WandB arguments
+    parser.add_argument("--wandb_project", type=str, default="biped-ppo-training", 
+                       help="WandB project name")
+    parser.add_argument("--wandb_tags", type=str, nargs="*", default=["biped", "ppo", "genesis"],
+                       help="WandB tags for organizing runs")
+    parser.add_argument("--wandb_notes", type=str, default="",
+                       help="Notes for this WandB run")
+    parser.add_argument("--no_wandb", action="store_true",
+                       help="Disable WandB logging")
+    
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
@@ -265,19 +305,63 @@ def main():
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    # Configure WandB settings
+    wandb_config = None
+    if WANDB_AVAILABLE and not args.no_wandb:
+        wandb_config = {
+            'project_name': args.wandb_project,
+            'experiment_name': args.exp_name,
+            'tags': args.wandb_tags,
+            'notes': args.wandb_notes or f"Biped training with {args.num_envs} environments",
+            'log_frequency': 1  # Log every iteration
+        }
+        print(f"🔧 WandB Configuration:")
+        print(f"   Project: {wandb_config['project_name']}")
+        print(f"   Experiment: {wandb_config['experiment_name']}")
+        print(f"   Tags: {wandb_config['tags']}")
+    
+    # Initialize runner with WandB integration
+    runner = WandbOnPolicyRunner(env, train_cfg, log_dir, device=gs.device, wandb_config=wandb_config)
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
         print('\n\nTraining interrupted by user (Ctrl+C)')
         print('Saving current model...')
-        # The runner automatically saves periodically, so we just exit gracefully
+        
+        # Save final model
+        final_model_path = os.path.join(log_dir, 'model_interrupted.pt')
+        runner.save(final_model_path)
+        
+        # Finish WandB logging gracefully
+        if hasattr(runner, 'wandb_logger') and runner.wandb_logger:
+            print('Finishing WandB logging...')
+            runner.wandb_logger.finish()
+        
+        print('Graceful shutdown completed.')
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    print(f"Starting training... Press Ctrl+C to stop and save the model.")
-    print(f"Logs will be saved to: {log_dir}")
+    print(f"🚀 Starting biped training with comprehensive WandB logging...")
+    print(f"📊 Tracking metrics:")
+    print(f"   • Episode Returns")
+    print(f"   • Policy Loss")
+    print(f"   • Value Loss") 
+    print(f"   • Entropy")
+    print(f"   • KL Divergence")
+    print(f"   • Mean Total Reward")
+    print(f"   • Performance Metrics (FPS, timing)")
+    print(f"   • Reward Components")
+    
+    if WANDB_AVAILABLE and not args.no_wandb:
+        print(f"📈 WandB Dashboard will be available during training")
+    else:
+        print(f"⚠️  WandB logging disabled - training without cloud logging")
+    
+    print(f"📁 Logs directory: {log_dir}")
+    print(f"🎮 Environments: {args.num_envs}")
+    print(f"🔄 Max iterations: {args.max_iterations}")
+    print(f"\n⌨️  Press Ctrl+C to stop training and save the model.")
     
     try:
         runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
@@ -286,6 +370,9 @@ def main():
         print('Final model save completed.')
     except Exception as e:
         print(f'\nTraining stopped due to error: {e}')
+        # Still try to finish WandB logging
+        if hasattr(runner, 'wandb_logger') and runner.wandb_logger:
+            runner.wandb_logger.finish()
         raise
 
 
@@ -295,14 +382,26 @@ if __name__ == "__main__":
 """
 PERFORMANCE OPTIMIZED TRAINING COMMANDS:
 
-# High-performance training with optimized environment (recommended)
-python biped_train.py -e biped-walking -B 4096
-
-# For systems with limited GPU memory
+# Basic training - runs until Ctrl+C with WandB logging
 python biped_train.py -e biped-walking -B 2048
 
-# Training with specific max iterations
-python biped_train.py -e biped-walking -B 4096 --max_iterations 2000
+# Training with custom WandB project and tags
+python biped_train.py -e biped-walking -B 2048 --wandb_project "my-biped-project" --wandb_tags biped ppo custom
+
+# Training without WandB logging
+python biped_train.py -e biped-walking -B 2048 --no_wandb
+
+# Training with specific max iterations and custom WandB settings
+python biped_train.py -e biped-walking -B 2048 --max_iterations 200 --wandb_notes "Testing new reward function"
+
+# Full example with all WandB options
+python biped_train.py \
+    -e my-biped-experiment \
+    -B 1024 \
+    --max_iterations 500 \
+    --wandb_project "biped-research" \
+    --wandb_tags biped ppo research baseline \
+    --wandb_notes "Baseline run with default hyperparameters"
 
 OPTIMIZATION NOTES:
 - Environment now uses pre-allocated tensor buffers
@@ -311,4 +410,5 @@ OPTIMIZATION NOTES:
 - Reward computation uses in-place operations
 - Recommended batch sizes: 2048-8192 depending on GPU memory
 - Performance improvements: 15-25% faster step times
+- WandB logging tracks all training metrics automatically
 """
