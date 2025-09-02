@@ -29,7 +29,7 @@ except ImportError as e:
 
 import genesis as gs
 
-from biped_env import BipedEnv
+from biped_env_main import BipedEnv
 
 
 def get_train_cfg(exp_name, max_iterations):
@@ -108,18 +108,18 @@ def get_cfgs():
         "kp": 30.0,  # Higher than quadruped due to biped instability
         "kd": 1.0,   # Higher damping for stability
         # termination conditions - tighter for biped
-        "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
-        "termination_if_pitch_greater_than": 30, # degree
+        "termination_if_roll_greater_than": 45,  # degree - bipeds can lean more
+        "termination_if_pitch_greater_than": 45, # degree
         
         # Actuator constraint termination
         "terminate_on_actuator_violation": True,  # Enable termination on severe violations
         "actuator_violation_termination_threshold": 2.0,  # Terminate if violation > this value
         
         # Fall penalty thresholds (in degrees)
-        "fall_roll_threshold": 25.0,   # Roll threshold for fall penalty (slightly less than termination)
-        "fall_pitch_threshold": 25.0,  # Pitch threshold for fall penalty (slightly less than termination)
+        "fall_roll_threshold": 40.0,   # Roll threshold for fall penalty (slightly less than termination)
+        "fall_pitch_threshold": 40.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - height adjusted for neutral configuration ground contact
-        "base_init_pos": [0.0, 0.0, -0.50],  # Lower spawn height for ground contact with neutral pose
+        "base_init_pos": [0.0, 0.0, 0.50],  # Lower spawn height for ground contact with neutral pose
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 90.0,
         "resampling_time_s": 4.0,
@@ -191,28 +191,17 @@ def get_cfgs():
         "feet_height_target": 0.1,  # Ground clearance during swing
         
         # New reward parameters
-        # "forward_velocity_target": 0.5,
         "stability_factor": 1.0,  # Torso stability smoothness factor
         "height_target": 0.25,  # Height maintenance target for neutral pose
         "movement_threshold": 2.0,  # Maximum movement reward threshold
         "movement_scale": 0.1,  # Scale factor for joint movement reward
-        "gait_amplitude": 0.4,   # The desired amplitude of the joint movement in radians
-        "gait_frequency": 0.6,   # The desired frequency of the gait in Hz
-        "gait_sigma": 0.25,      # The tolerance for the reward. Smaller values are stricter.
         
-        # Torso sinusoidal motion parameters
-        "torso_amplitude": 0.2,  # Smaller amplitude for torso sinusoidal motion (rad)
-        "torso_frequency": 0.3,  # Different frequency from leg gait (Hz)
-        "torso_phase": 1.732,      # Phase offset for torso motion
-        "torso_sigma": 0.25,     # Tolerance for torso sinusoidal reward
         
         "tracking_sigma": 0.25,
         
-        # Actuator constraint parameters
-        "actuator_constraint_limit": 6.16,  # speed + 3.5*torque <= 6.16
-        "actuator_torque_coeff": 3.5,       # Coefficient for torque in constraint
-        "actuator_tolerance": 0.5,           # Tolerance before penalty starts
-        "actuator_termination_threshold": 2.0,  # Violation level for termination
+        
+        # Foot parallelism reward parameters
+        "foot_parallelism_k": 7.0,  # Scaling factor for exponential reward (higher = more sensitive)
         
         "reward_scales": {
             # Velocity tracking rewards (primary objectives)
@@ -226,11 +215,12 @@ def get_cfgs():
             "alive_bonus": 0.5,             # Alive bonus per step
             "fall_penalty": -100.0,         # Large penalty for falling
             "torso_stability": 5.0,         # Torso stability reward
-            # "height_maintenance": -2.0,     # Height maintenance
-            
-                        # Gait and movement rewards (reduced to prioritize command following)
-            # "sinusoidal_gait": 2.0,         # Leg sinusoidal gait (reduced weight)
+            "height_maintenance": -2.0,     # Height maintenance
             "joint_movement": 1.0,          # Reward for joint movement (reduced weight)
+
+            
+            # Foot parallelism reward
+            "foot_parallelism": 3.0,        # Reward for foot parallelism to ground
         },
         
         # Enable/disable reward functions using if True/False
@@ -243,14 +233,17 @@ def get_cfgs():
             "lin_vel_z": True,              # Penalize vertical motion
             "action_rate": True,            # Smooth actions
             "similar_to_default": True,     # Stay near neutral pose
+
             "alive_bonus": True,            # Alive bonus per step
             "fall_penalty": True,           # Large penalty for falling
-            "torso_stability": True,        # Torso stability reward
-            "height_maintenance": True,     # Height maintenance
+            "torso_stability": False,        # Torso stability reward
+            "height_maintenance": False,     # Height maintenance
             
-            # Gait and movement rewards (reduced to prioritize command following)
-            # "sinusoidal_gait": True,        # Leg sinusoidal gait
             "joint_movement": True,         # Reward for joint movement
+
+            
+            # Foot parallelism reward
+            "foot_parallelism": True,       # Enable foot parallelism reward
         },
     }
     
@@ -271,7 +264,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="biped-walking")
     # Increased default batch size for better GPU utilization with optimized environment
-    parser.add_argument("-B", "--num_envs", type=int, default=1024)  # Increased from 1 for performance
+    parser.add_argument("-B", "--num_envs", type=int, default=1)  # Increased from 1 for performance
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
     
     # WandB arguments

@@ -15,6 +15,7 @@ OPTIMIZATION FEATURES:
 import torch
 import numpy as np
 import genesis as gs
+from utils import quaternion_to_rotation_matrix, get_axis_orientation_wrt_world_z, get_foot_axis_dot_products
 
 
 class RewardFunctions:
@@ -33,9 +34,7 @@ class RewardFunctions:
             'height_error': torch.zeros((self.num_envs,), device=device, dtype=gs.tc_float),
             'action_diff': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
             'dof_diff': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
-            'constraint_values': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
-            'gait_target': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
-            'gait_error': torch.zeros((self.num_envs,), device=device, dtype=gs.tc_float),
+            'foot_quaternions': torch.zeros((self.num_envs, 2, 4), device=device, dtype=gs.tc_float),
         }
     
     def reward_lin_vel_z(self, base_lin_vel):
@@ -110,69 +109,46 @@ class RewardFunctions:
 
         return torch.clamp(joint_vel_magnitude * movement_scale, 0.0, movement_threshold)
     
-    def reward_sinusoidal_gait(self, dof_pos, default_dof_pos, episode_length_buf, dt):
-        """Optimized sinusoidal gait reward using pre-allocated buffers"""
-        amplitude = self.reward_cfg.get("gait_amplitude", 0.5)
-        frequency = self.reward_cfg.get("gait_frequency", 0.5)
-        
-        # Pre-defined phase offsets - avoid tensor creation
-        phase_offsets = torch.tensor(
-            [0, 0, 0, 0, np.pi, 0, 0, 0], 
-            device=self.device, dtype=gs.tc_float
-        )
 
-        time = episode_length_buf * dt
-        time = time.unsqueeze(1)
-
-        # Use pre-allocated buffer for target calculation
-        torch.sin(2 * np.pi * frequency * time + phase_offsets, out=self.reward_buffers['gait_target'])
-        self.reward_buffers['gait_target'].mul_(amplitude)
-        self.reward_buffers['gait_target'].add_(default_dof_pos)
-
-        # Calculate error using pre-allocated buffer
-        torch.sub(dof_pos, self.reward_buffers['gait_target'], out=self.reward_buffers['gait_target'])
-        torch.square(self.reward_buffers['gait_target'], out=self.reward_buffers['gait_target'])
-        error = torch.sum(self.reward_buffers['gait_target'], dim=1)
-
-        sigma = self.reward_cfg.get("gait_sigma", 0.25)
-        return torch.exp(-error / sigma)
-
-    def reward_torso_sinusoidal(self):
-        """Placeholder for torso sinusoidal reward (currently returns zeros)"""
-        return torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float)
-
-    def reward_actuator_constraint(self, dof_vel, joint_torques):
-        """
-        Optimized actuator constraint reward using pre-allocated buffers
-        Enforces: speed + 3.5*|torque| <= 6.16
-        """
-        constraint_limit = self.reward_cfg.get("actuator_constraint_limit", 6.16)
-        torque_coeff = self.reward_cfg.get("actuator_torque_coeff", 3.5)
-        tolerance = self.reward_cfg.get("actuator_tolerance", 0.5)
-        
-        # Use pre-allocated buffer for constraint computation
-        # constraint_values = |dof_vel| + torque_coeff * |joint_torques|
-        torch.abs(dof_vel, out=self.reward_buffers['constraint_values'])
-        
-        # Simple approach: compute torque_coeff * |joint_torques| and add
-        abs_torques = torch.abs(joint_torques)
-        torch.add(self.reward_buffers['constraint_values'], 
-                 abs_torques, 
-                 alpha=torque_coeff,
-                 out=self.reward_buffers['constraint_values'])
-        
-        target_with_tolerance = constraint_limit + tolerance
-        torch.sub(self.reward_buffers['constraint_values'], target_with_tolerance, 
-                 out=self.reward_buffers['constraint_values'])
-        # Use clamp instead of relu since relu doesn't support out parameter
-        torch.clamp(self.reward_buffers['constraint_values'], min=0.0, 
-                   out=self.reward_buffers['constraint_values'])
-        
-        total_violation_per_env = torch.sum(self.reward_buffers['constraint_values'], dim=1)
-        
-        return -total_violation_per_env
     
-    def compute_rewards(self, base_lin_vel, actions, last_actions, dof_pos, default_dof_pos, commands, base_euler, base_pos, dof_vel, episode_length_buf, dt, joint_torques):
+    
+    def reward_foot_parallelism(self, foot_quaternions):
+        """
+        Reward for foot parallelism to ground using Y-axis orientation.
+        For each foot, reward = exp(abs(left_y_dot) * k) where k is a scaling factor.
+        
+        Args:
+            foot_quaternions: Tensor of shape (num_envs, 2, 4) for [left_foot, right_foot] quaternions
+            
+        Returns:
+            Combined reward for both feet parallelism
+        """
+        # Get parallelism parameters from config
+        k_factor = self.reward_cfg.get("foot_parallelism_k", 1.0)  # Scaling factor for exponential
+
+        left_rot_matrix = quaternion_to_rotation_matrix(foot_quaternions[:, 0])  # (num_envs, 3, 3)
+        right_rot_matrix = quaternion_to_rotation_matrix(foot_quaternions[:, 1])  # (num_envs, 3, 3)
+        
+        # Get dot products for the specified axis
+        _, left_y_dot = get_axis_orientation_wrt_world_z(left_rot_matrix, axis_index = 0)
+        _, right_x_dot = get_axis_orientation_wrt_world_z(right_rot_matrix, axis_index = 1)
+        
+        # Get dot products of foot Y-axes with world Z-axis
+        # left_y_dot, _ = get_foot_axis_dot_products(foot_quaternions, axis_index=1)
+        # _,right_x_dot = get_foot_axis_dot_products(foot_quaternions, axis_index=1)
+        print(foot_quaternions,left_y_dot,  right_x_dot)
+
+        # Calculate rewards: exp(abs(dot_product) * k)
+        # Higher abs(dot_product) means more aligned with world Z (more parallel to ground)
+        left_reward = torch.exp(-torch.abs(left_y_dot) * k_factor)
+        right_reward = torch.exp(-torch.abs(right_x_dot) * k_factor)
+        
+        # Combine left and right foot rewards
+        total_reward = (left_reward + right_reward) / 2.0
+        
+        return total_reward
+    
+    def compute_rewards(self, base_lin_vel, actions, last_actions, dof_pos, default_dof_pos, commands, base_euler, base_pos, dof_vel, episode_length_buf, dt, joint_torques, foot_quaternions=None):
         """
         Calculates and returns a dictionary of all reward components.
         This consolidated method is called by the optimized environment for performance.
@@ -185,13 +161,8 @@ class RewardFunctions:
             'tracking_lin_vel_y': self.reward_tracking_lin_vel_y(commands, base_lin_vel),
             'alive_bonus': self.reward_alive_bonus(),
             'fall_penalty': self.reward_fall_penalty(base_euler, self.reward_cfg), # Assuming env_cfg was passed as reward_cfg
-            'torso_stability': self.reward_torso_stability(base_euler),
             'height_maintenance': self.reward_height_maintenance(base_pos),
             'joint_movement': self.reward_joint_movement(dof_vel),
-            'sinusoidal_gait': self.reward_sinusoidal_gait(dof_pos, default_dof_pos, episode_length_buf, dt),
-            'torso_sinusoidal': self.reward_torso_sinusoidal(),
-            # Note: The original implementation for this reward in the env was complex.
-            # You may need to adjust the inputs or logic if it was using more state.
-            'actuator_constraint': self.reward_actuator_constraint(dof_vel, joint_torques)
+            'foot_parallelism': self.reward_foot_parallelism(foot_quaternions) if foot_quaternions is not None else torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float),
         }
         return rewards

@@ -86,11 +86,16 @@ class BipedEnv:
         self.knee_dof_indices = [joint_names.index(name) for name in ["right_knee", "left_knee"]]
         self.ankle_dof_indices = [joint_names.index(name) for name in ["right_ankle", "left_ankle"]]
         
-        # Foot contact sensors
+        # Foot contact sensors and link indices for foot quaternions
         self.left_foot_contact_sensor, self.right_foot_contact_sensor = None, None
+        self.left_foot_link_idx, self.right_foot_link_idx = None, None
         for link in self.robot.links:
-            if link.name == "revolute_leftfoot": self.left_foot_contact_sensor = RigidContactForceGridSensor(self.robot, link.idx, (2, 2, 2))
-            elif link.name == "revolute_rightfoot": self.right_foot_contact_sensor = RigidContactForceGridSensor(self.robot, link.idx, (2, 2, 2))
+            if link.name == "revolute_leftfoot": 
+                self.left_foot_contact_sensor = RigidContactForceGridSensor(self.robot, link.idx, (2, 2, 2))
+                self.left_foot_link_idx = link.idx
+            elif link.name == "revolute_rightfoot": 
+                self.right_foot_contact_sensor = RigidContactForceGridSensor(self.robot, link.idx, (2, 2, 2))
+                self.right_foot_link_idx = link.idx
 
         # PD control and Domain Randomization setup
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
@@ -161,6 +166,9 @@ class BipedEnv:
         self.joint_torques = torch.zeros_like(self.actions)
         self.foot_contacts = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)
         self.foot_contacts_raw = torch.zeros((self.num_envs, 2), device=gs.device, dtype=gs.tc_float)
+        
+        # Foot quaternions for parallelism reward [left_foot, right_foot]
+        self.foot_quaternions = torch.zeros((self.num_envs, 2, 4), device=gs.device, dtype=gs.tc_float)
 
     def _resample_commands(self, envs_idx):
         if len(envs_idx) == 0: return
@@ -232,6 +240,44 @@ class BipedEnv:
             self.foot_contacts = self.domain_randomizer.apply_foot_contact_randomization_optimized(self.foot_contacts_raw)
         else:
             self.foot_contacts = self.foot_contacts_raw.clone()
+            
+        # Get foot quaternions for parallelism reward
+        if self.left_foot_link_idx is not None and self.right_foot_link_idx is not None:
+            try:
+                # Get all links state
+                all_link_quaternions = self.robot.get_links_quat()  # Based on example.py API
+                
+                # Check if this is per-environment or global
+                if all_link_quaternions.shape[0] == self.robot.n_links:
+                    # Shape is (num_links, 4) - same for all environments
+                    # Extract the foot quaternions
+                    left_quat = all_link_quaternions[self.left_foot_link_idx]   # Shape: (4,)
+                    right_quat = all_link_quaternions[self.right_foot_link_idx] # Shape: (4,)
+                    
+                    # Broadcast to all environments
+                    self.foot_quaternions[:, 0] = left_quat
+                    self.foot_quaternions[:, 1] = right_quat
+                    
+                elif all_link_quaternions.shape[0] == self.num_envs * self.robot.n_links:
+                    # Shape is (num_envs * num_links, 4) - flattened
+                    for env_idx in range(self.num_envs):
+                        left_idx = env_idx * self.robot.n_links + self.left_foot_link_idx
+                        right_idx = env_idx * self.robot.n_links + self.right_foot_link_idx
+                        self.foot_quaternions[env_idx, 0] = all_link_quaternions[left_idx]
+                        self.foot_quaternions[env_idx, 1] = all_link_quaternions[right_idx]
+                        
+                else:
+                    # Try 3D tensor shape (num_envs, num_links, 4)
+                    self.foot_quaternions[:, 0] = all_link_quaternions[:, self.left_foot_link_idx]
+                    self.foot_quaternions[:, 1] = all_link_quaternions[:, self.right_foot_link_idx]
+                    
+            except Exception as e:
+                # Fallback: Set identity quaternions (no rotation)
+                self.foot_quaternions.fill_(0.0)
+                self.foot_quaternions[:, :, 0] = 1.0  # w component = 1 for identity quaternion
+
+    def get_privileged_observations(self):
+        return None
 
     def _check_termination(self):
         """Checks for any termination conditions."""
@@ -259,12 +305,14 @@ class BipedEnv:
             dof_vel=self.dof_vel,
             episode_length_buf=self.episode_length_buf,
             dt=self.dt,
-            joint_torques=self.joint_torques
+            joint_torques=self.joint_torques,
+            foot_quaternions=self.foot_quaternions
         )
         for name, rew in rewards.items():
-            scaled_rew = rew * self.reward_scales[name]
-            self.rew_buf += scaled_rew
-            self.episode_sums[name] += scaled_rew
+            if name in self.reward_scales:  # Only process rewards that have defined scales
+                scaled_rew = rew * self.reward_scales[name]
+                self.rew_buf += scaled_rew
+                self.episode_sums[name] += scaled_rew
         self.episode_sums["fps"][:] = self.current_fps
 
     def _create_observations(self):
