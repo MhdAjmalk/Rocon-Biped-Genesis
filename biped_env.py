@@ -1253,3 +1253,19 @@ class BipedEnv:
         randomized_contacts = torch.clamp(randomized_contacts, 0.0, 1.0)
         
         return randomized_contacts
+
+
+""" in your environment init
+self.num_privileged_obs = <N>   # e.g. 16
+self.privileged_obs_buf = torch.zeros((self.num_envs, self.num_privileged_obs), device=self.device)
+
+# in _create_observations() after filling self.obs_buf:
+# fill privileged buffer with simulator state only available to critic
+self.privileged_obs_buf[:, :3].copy_(self.base_pos)     # full xyz
+self.privileged_obs_buf[:, 3:7].copy_(self.base_quat)   # full quaternion
+# ... other privileged entries ...
+
+# when returning step() results:
+self.extras["observations"]["critic"] = self.privileged_obs_buf
+return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
+"""

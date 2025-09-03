@@ -121,75 +121,121 @@ class GenesisSimulation:
     
     def step(self):
         """
-        Advances the simulation by one step.
+        Advances the simulation by one step and demonstrates solver access methods.
         """
         self.scene.step()
         
-        # Check if we found the foot links
-        if self.right_foot_index is None or self.left_foot_index is None:
-            print("Cannot get foot orientations - foot links not found")
-            return
+        print("\n=== Direct Solver Access - Complete Working Example ===")
+        
+        try:
+            # Access the solver's state fields directly
+            solver = self.scene.rigid_solver
             
-        # Get all link positions and orientations using Genesis methods
-        positions = self.biped_robot.get_links_pos()  # Returns numpy array
-        quaternions = self.biped_robot.get_links_quat()  # Returns numpy array
-        
-        # Extract data for our target links
-        right_pos = positions[self.right_foot_index]
-        left_pos = positions[self.left_foot_index]
-        right_quat = quaternions[self.right_foot_index]  # [w, x, y, z] format in Genesis
-        left_quat = quaternions[self.left_foot_index]
-        
-        # Convert quaternions to rotation matrices
-        right_rot_matrix = self.quaternion_to_rotation_matrix(right_quat)
-        left_rot_matrix = self.quaternion_to_rotation_matrix(left_quat)
-        
-        # Calculate orientations relative to world Z-axis
-        # Right foot X-axis vs World Z-axis
-        right_x_angle, right_x_dot = self.get_axis_orientation_wrt_world_z(right_rot_matrix, 0)
-        
-        # Left foot Y-axis vs World Z-axis  
-        left_y_angle, left_y_dot = self.get_axis_orientation_wrt_world_z(left_rot_matrix, 1)
-        
-        # Print the results
-        print(f"\n=== Axis Orientations Relative to World Z-Axis ===")
-        print(f"Right foot ({self.right_foot_link_name}) X-axis:")
-        print(f"  Angle with World Z-axis: {right_x_angle:.2f} degrees")
-        print(f"  Dot product (cosine): {right_x_dot:.4f}")
-        # print(f"  X-axis vector in world frame: {right_rot_matrix[:, 0]}")
-        
-        print(f"Left foot ({self.left_foot_link_name}) Y-axis:")
-        print(f"  Angle with World Z-axis: {left_y_angle:.2f} degrees")
-        print(f"  Dot product (cosine): {left_y_dot:.4f}")
-        # print(f"  Y-axis vector in world frame: {left_rot_matrix[:, 1]}")
-        
-        # Additional useful information
-        # print(f"\n=== Additional Foot Information ===")
-        # print(f"Right foot position: {right_pos}")
-        # print(f"Left foot position: {left_pos}")
-        # print(f"Right foot quaternion (w,x,y,z): {right_quat}")
-        # print(f"Left foot quaternion (w,x,y,z): {left_quat}")
-        
-        # Example reward calculations based on axis orientations
-        # For foot parallelism to ground, you might want the foot's normal (Z-axis) to align with world Z
-        right_z_angle, right_z_dot = self.get_axis_orientation_wrt_world_z(right_rot_matrix, 2)
-        left_z_angle, left_z_dot = self.get_axis_orientation_wrt_world_z(left_rot_matrix, 2)
-        
-        # print(f"\n=== Foot Parallelism to Ground (Z-axis alignment) ===")
-        # print(f"Right foot Z-axis angle with World Z: {right_z_angle:.2f} degrees")
-        # print(f"Left foot Z-axis angle with World Z: {left_z_angle:.2f} degrees")
-        
-        # Reward calculation examples
-        # Higher reward when foot Z-axis is aligned with world Z (parallel to ground)
-        right_parallelism_reward = abs(right_z_dot)  # Close to 1 when parallel
-        left_parallelism_reward = abs(left_z_dot)
-        total_parallelism_reward = (right_parallelism_reward + left_parallelism_reward) / 2.0
-        # print(f"Foot parallelism reward: {total_parallelism_reward:.4f}")
+            # Get number of DOFs and links
+            n_dofs = solver.n_dofs
+            n_links = solver.n_links
+            
+            print(f"Number of DOFs: {n_dofs}")
+            print(f"Number of links: {n_links}")
+            
+            # ===== METHOD 1: Using Solver Getter Methods (RECOMMENDED) =====
+            print("\n--- Method 1: Using Solver Getter Methods (Recommended) ---")
+            
+            # Get DOF states using solver methods
+            dof_positions = solver.get_dofs_position()
+            dof_velocities = solver.get_dofs_velocity()
+            dof_forces = solver.get_dofs_force()
+            
+            print("DOF States:")
+            for i in range(min(5, n_dofs)):
+                print(f"  DOF {i}: pos={dof_positions[i]:.6f}, vel={dof_velocities[i]:.6f}, force={dof_forces[i]:.6f}")
+            
+            # Get link states using solver methods
+            link_positions = solver.get_links_pos()
+            link_quaternions = solver.get_links_quat()
+            link_masses = solver.get_links_inertial_mass()
+            
+            print("Link States:")
+            for i in range(min(5, n_links)):
+                pos = link_positions[i]
+                quat = link_quaternions[i]
+                mass = link_masses[i]
+                print(f"  Link {i}: pos=[{pos[0]:.6f}, {pos[1]:.6f}, {pos[2]:.6f}], mass={mass:.6f}")
+            
+            # ===== METHOD 2: Direct Taichi Field Access =====
+            print("\n--- Method 2: Direct Taichi Field Access ---")
+            
+            # Access state arrays (these are Taichi fields)
+            # Note: Be careful with indexing - these are internal solver arrays
+            
+            # Access DOF states directly from Taichi fields
+            dofs_state = solver.dofs_state
+            print("DOF States (Direct Taichi Access):")
+            
+            # For Taichi fields, we need to access individual elements
+            for dof_idx in range(min(n_dofs, 5)):
+                # Access Taichi field values - note the [None] indexing for scalar fields
+                dof_pos = dofs_state.pos[dof_idx, 0]  # Shape is (n_dofs, 1)
+                dof_vel = dofs_state.vel[dof_idx, 0]
+                dof_force = dofs_state.force[dof_idx, 0]
+                print(f"  DOF {dof_idx}: pos={dof_pos:.6f}, vel={dof_vel:.6f}, force={dof_force:.6f}")
+                # print("Difference between 0 & 1")
+                # dof_pos1 = dofs_state.pos[dof_idx, 0]  # Shape is (n_dofs, 1)
+                # dof_vel1 = dofs_state.vel[dof_idx, 0]
+                # dof_force1 = dofs_state.force[dof_idx, 0]
+                # print(f"  DOF {dof_idx} (repeat): pos={dof_pos1:.6f}, vel={dof_vel1:.6f}, force={dof_force1:.6f}")
+            
+            # Access link states directly from Taichi fields
+            links_state = solver.links_state
+            print("Link States (Direct Taichi Access):")
+            
+            # for link_idx in range(min(n_links, 5)):
+            #     # Access Taichi matrix field values - note the [None] indexing
+            #     link_pos = links_state.pos[link_idx, 0]  # Returns a 3D vector
+            #     link_quat = links_state.quat[link_idx, 0]  # Returns a 4D quaternion
+            #     link_mass = links_state.cinr_mass[link_idx, 0]  # Total mass
+                
+            #     print(f"  Link {link_idx}: pos=[{link_pos[0]:.6f}, {link_pos[1]:.6f}, {link_pos[2]:.6f}], mass={link_mass:.6f}")
+            #     print(f"             quat=[{link_quat[0]:.6f}, {link_quat[1]:.6f}, {link_quat[2]:.6f}, {link_quat[3]:.6f}]")
+            
+            # ===== METHOD 3: Entity-level Access (Original) =====
+            print("\n--- Method 3: Entity-level Access (Robot-specific) ---")
+            
+            # This accesses only the robot entity's DOFs/links (excludes ground plane)
+            robot_positions = self.biped_robot.get_links_pos()
+            robot_quaternions = self.biped_robot.get_links_quat()
+            robot_dof_positions = self.biped_robot.get_dofs_position()
+            
+            print(f"Robot Entity - Links: {robot_positions.shape[0]}, DOFs: {robot_dof_positions.shape[0]}")
+            print(f"Robot Entity - First link position: {robot_positions[0]}")
+            print(f"Robot Entity - First DOF position: {robot_dof_positions[0]:.6f}")
+            
+            # ===== COMPARISON AND VERIFICATION =====
+            print("\n--- Verification: Comparing Methods ---")
+            
+            # Compare solver method vs entity method for DOF 0
+            solver_dof_0 = dof_positions[0].item()
+            entity_dof_0 = robot_dof_positions[0].item() 
+            print(f"DOF 0 - Solver method: {solver_dof_0:.6f}")
+            print(f"DOF 0 - Entity method: {entity_dof_0:.6f}")
+            print(f"DOF 0 - Difference: {abs(solver_dof_0 - entity_dof_0):.8f}")
+            
+            # Note: Solver has 10 links (includes ground), Entity has 9 links (robot only)
+            # Compare link 1 (first robot link)
+            solver_link_1 = link_positions[1]  # Link 1 in solver = Link 0 in robot entity
+            entity_link_0 = robot_positions[0]
+            print(f"Link position - Solver[1]: {solver_link_1}")
+            print(f"Link position - Entity[0]: {entity_link_0}")
+            
+        except Exception as e:
+            print(f"Error accessing solver: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
     """
-    Main function to run the simulation and print link orientations.
+    Main function to run the simulation and test solver access.
     """
     # Create simulation instance
     sim = GenesisSimulation(show_viewer=False)
@@ -197,15 +243,17 @@ def main():
     # Build the scene
     sim.build_scene()
     
-    # Run simulation for a few steps to see the orientations
-    print("Starting simulation and printing link orientations...")
-    for step_num in range(100000):  # Run for 10 steps (reduced from 1000000)
-        print(f"\n--- Step {step_num + 1} ---")
+    # Run simulation for a few steps to test the solver access
+    print("Starting simulation and testing direct solver access...")
+    for step_num in range(3):  # Run for just 3 steps to test
+        print(f"\n{'='*50}")
+        print(f"--- Step {step_num + 1} ---")
+        print(f"{'='*50}")
         sim.step()
         
         # Add a small delay to make output readable
         import time
-        time.sleep(0.5)
+        time.sleep(1.0)
 
 if __name__ == "__main__":
     main()

@@ -15,7 +15,15 @@ OPTIMIZATION FEATURES:
 import torch
 import numpy as np
 import genesis as gs
-from utils import quaternion_to_rotation_matrix, get_axis_orientation_wrt_world_z, get_foot_axis_dot_products
+from utils import (
+    quaternion_to_rotation_matrix, 
+    get_axis_orientation_wrt_world_z, 
+    get_foot_axis_dot_products,
+    compute_feet_air_time_reward,
+    compute_feet_air_time_positive_biped_reward,
+    compute_feet_slide_penalty
+)
+import time
 
 
 class RewardFunctions:
@@ -133,22 +141,52 @@ class RewardFunctions:
         _, left_y_dot = get_axis_orientation_wrt_world_z(left_rot_matrix, axis_index = 0)
         _, right_x_dot = get_axis_orientation_wrt_world_z(right_rot_matrix, axis_index = 1)
         
-        # Get dot products of foot Y-axes with world Z-axis
-        # left_y_dot, _ = get_foot_axis_dot_products(foot_quaternions, axis_index=1)
-        # _,right_x_dot = get_foot_axis_dot_products(foot_quaternions, axis_index=1)
-        print(foot_quaternions,left_y_dot,  right_x_dot)
-
-        # Calculate rewards: exp(abs(dot_product) * k)
-        # Higher abs(dot_product) means more aligned with world Z (more parallel to ground)
-        left_reward = torch.exp(-torch.abs(left_y_dot) * k_factor)
-        right_reward = torch.exp(-torch.abs(right_x_dot) * k_factor)
+        left_reward = torch.exp(-(1-torch.abs(left_y_dot)) * k_factor)
+        right_reward = torch.exp(-(1-torch.abs(right_x_dot)) * k_factor)
         
         # Combine left and right foot rewards
         total_reward = (left_reward + right_reward) / 2.0
         
         return total_reward
     
-    def compute_rewards(self, base_lin_vel, actions, last_actions, dof_pos, default_dof_pos, commands, base_euler, base_pos, dof_vel, episode_length_buf, dt, joint_torques, foot_quaternions=None):
+    def reward_feet_air_time(self, foot_contacts, last_air_time, first_contact, commands):
+        """
+        Reward for feet air time above threshold during first contact.
+        Uses utility function from utils.py.
+        """
+        threshold = self.reward_cfg.get("feet_air_time_threshold", 0.1)
+        command_threshold = self.reward_cfg.get("command_threshold", 0.1)
+        
+        return compute_feet_air_time_reward(
+            foot_contacts, last_air_time, first_contact, commands, 
+            threshold, command_threshold
+        )
+    
+    def reward_feet_air_time_positive_biped(self, current_air_time, current_contact_time, commands):
+        """
+        Positive reward for maintaining proper gait timing during single stance.
+        Uses utility function from utils.py.
+        """
+        threshold = self.reward_cfg.get("feet_air_time_positive_threshold", 0.5)
+        command_threshold = self.reward_cfg.get("command_threshold", 0.1)
+        
+        return compute_feet_air_time_positive_biped_reward(
+            current_air_time, current_contact_time, commands,
+            threshold, command_threshold
+        )
+    
+    def reward_feet_slide(self, foot_contacts, foot_velocities):
+        """
+        Penalty for foot sliding when in contact with ground.
+        Uses utility function from utils.py.
+        """
+        contact_threshold = self.reward_cfg.get("feet_slide_contact_threshold", 1.0)
+        
+        return compute_feet_slide_penalty(
+            foot_contacts, foot_velocities, contact_threshold
+        )
+    
+    def compute_rewards(self, base_lin_vel, actions, last_actions, dof_pos, default_dof_pos, commands, base_euler, base_pos, dof_vel, episode_length_buf, dt, joint_torques, foot_quaternions=None, foot_contacts=None, last_air_time=None, first_contact=None, current_air_time=None, current_contact_time=None, foot_velocities=None):
         """
         Calculates and returns a dictionary of all reward components.
         This consolidated method is called by the optimized environment for performance.
@@ -164,5 +202,8 @@ class RewardFunctions:
             'height_maintenance': self.reward_height_maintenance(base_pos),
             'joint_movement': self.reward_joint_movement(dof_vel),
             'foot_parallelism': self.reward_foot_parallelism(foot_quaternions) if foot_quaternions is not None else torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float),
+            'feet_air_time': self.reward_feet_air_time(foot_contacts, last_air_time, first_contact, commands) if all(x is not None for x in [foot_contacts, last_air_time, first_contact]) else torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float),
+            'feet_air_time_positive_biped': self.reward_feet_air_time_positive_biped(current_air_time, current_contact_time, commands) if all(x is not None for x in [current_air_time, current_contact_time]) else torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float),
+            'feet_slide': self.reward_feet_slide(foot_contacts, foot_velocities) if all(x is not None for x in [foot_contacts, foot_velocities]) else torch.zeros(self.num_envs, device=self.device, dtype=gs.tc_float),
         }
         return rewards

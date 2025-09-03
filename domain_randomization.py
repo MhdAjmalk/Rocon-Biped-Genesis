@@ -56,10 +56,10 @@ class DomainRandomization:
         
         # Pre-allocate domain randomization buffers for vectorized operations
         self.randomization_buffers = {
-            'motor_strengths': torch.ones((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
-            'friction_values': torch.ones((self.num_envs,), device=device, dtype=gs.tc_float),
-            'mass_offsets': torch.zeros((self.num_envs,), device=device, dtype=gs.tc_float),
-            'backlash_values': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float),
+            'motor_strengths': torch.ones((self.num_envs, self.num_actions), device=device, dtype=torch.float32),
+            'friction_values': torch.ones((self.num_envs,), device=device, dtype=torch.float32),
+            'mass_offsets': torch.zeros((self.num_envs,), device=device, dtype=torch.float32),
+            'backlash_values': torch.zeros((self.num_envs, self.num_actions), device=device, dtype=torch.float32),
         }
         
         # Different update intervals for different randomizations
@@ -75,19 +75,19 @@ class DomainRandomization:
         self.randomization_step_counter = 0
         
         # Motor Backlash Buffers
-        self.motor_backlash = torch.zeros((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float)
-        self.motor_backlash_direction = torch.ones((self.num_envs, self.num_actions), device=device, dtype=gs.tc_float)
+        self.motor_backlash = torch.zeros((self.num_envs, self.num_actions), device=device, dtype=torch.float32)
+        self.motor_backlash_direction = torch.ones((self.num_envs, self.num_actions), device=device, dtype=torch.float32)
         self.last_motor_positions = torch.zeros((self.num_envs, self.num_actions), device=device)
         
         # Foot Contact Domain Randomization Buffers
         fc_params = self.env_cfg["domain_rand"]["foot_contact_params"]
         max_delay = fc_params["contact_delay_range"][1]
-        self.contact_thresholds = torch.zeros((self.num_envs, 2), device=device, dtype=gs.tc_float)
-        self.contact_noise_scale = torch.zeros((self.num_envs, 2), device=device, dtype=gs.tc_float)
-        self.contact_false_positive_prob = torch.zeros((self.num_envs, 2), device=device, dtype=gs.tc_float)
-        self.contact_false_negative_prob = torch.zeros((self.num_envs, 2), device=device, dtype=gs.tc_float)
+        self.contact_thresholds = torch.zeros((self.num_envs, 2), device=device, dtype=torch.float32)
+        self.contact_noise_scale = torch.zeros((self.num_envs, 2), device=device, dtype=torch.float32)
+        self.contact_false_positive_prob = torch.zeros((self.num_envs, 2), device=device, dtype=torch.float32)
+        self.contact_false_negative_prob = torch.zeros((self.num_envs, 2), device=device, dtype=torch.float32)
         self.contact_delay_steps = torch.zeros((self.num_envs, 2), device=device, dtype=torch.long)
-        self.contact_delay_buffer = torch.zeros((self.num_envs, 2, max_delay + 1), device=device, dtype=gs.tc_float)
+        self.contact_delay_buffer = torch.zeros((self.num_envs, 2, max_delay + 1), device=device, dtype=torch.float32)
         self.contact_delay_idx = torch.zeros((self.num_envs,), device=device, dtype=torch.long)
     
     def should_update_randomization(self, randomization_type):

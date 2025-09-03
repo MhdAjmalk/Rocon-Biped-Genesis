@@ -143,3 +143,105 @@ def get_foot_axis_dot_products(foot_quaternions, axis_index=1):
     _, right_dot = get_axis_orientation_wrt_world_z(right_rot_matrix, axis_index)
     
     return left_dot, right_dot
+
+
+def compute_feet_air_time_reward(
+    foot_contacts: torch.Tensor,
+    last_air_time: torch.Tensor,
+    first_contact: torch.Tensor,
+    commands: torch.Tensor,
+    threshold: float,
+    command_threshold: float = 0.1
+):
+    """
+    Reward for feet air time above threshold during first contact.
+    
+    Args:
+        foot_contacts: Current foot contact forces (num_envs, 2)
+        last_air_time: Last recorded air time for each foot (num_envs, 2)
+        first_contact: Binary tensor indicating first contact this step (num_envs, 2)
+        commands: Velocity commands (num_envs, 3)
+        threshold: Minimum air time threshold
+        command_threshold: Minimum command magnitude to give reward
+        
+    Returns:
+        Reward tensor (num_envs,)
+    """
+    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+    
+    # No reward for zero command - only when moving
+    command_magnitude = torch.norm(commands[:, :2], dim=1)
+    reward = reward * (command_magnitude > command_threshold)
+    
+    return reward
+
+
+def compute_feet_air_time_positive_biped_reward(
+    current_air_time: torch.Tensor,
+    current_contact_time: torch.Tensor,
+    commands: torch.Tensor,
+    threshold: float,
+    command_threshold: float = 0.1
+):
+    """
+    Positive reward for maintaining proper gait timing during single stance.
+    
+    Args:
+        current_air_time: Current time in air for each foot (num_envs, 2)
+        current_contact_time: Current time in contact for each foot (num_envs, 2)
+        commands: Velocity commands (num_envs, 3)
+        threshold: Maximum time threshold
+        command_threshold: Minimum command magnitude to give reward
+        
+    Returns:
+        Reward tensor (num_envs,)
+    """
+    # Determine which feet are in contact
+    in_contact = current_contact_time > 0.0
+    
+    # Choose current air time or contact time based on contact state
+    in_mode_time = torch.where(in_contact, current_contact_time, current_air_time)
+    
+    # Check for single stance (only one foot in contact)
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+    
+    # Compute reward only during single stance
+    reward_candidate = torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0)
+    reward = torch.min(reward_candidate, dim=1)[0]
+    
+    # Clamp to threshold
+    reward = torch.clamp(reward, max=threshold)
+    
+    # No reward for zero command
+    command_magnitude = torch.norm(commands[:, :2], dim=1)
+    reward = reward * (command_magnitude > command_threshold)
+    
+    return reward
+
+
+def compute_feet_slide_penalty(
+    foot_contacts: torch.Tensor,
+    foot_velocities: torch.Tensor,
+    contact_threshold: float = 1.0
+):
+    """
+    Penalty for foot sliding when in contact with ground.
+    
+    Args:
+        foot_contacts: Current foot contact forces (num_envs, 2)
+        foot_velocities: Foot velocities (num_envs, 2, 3)
+        contact_threshold: Force threshold for contact detection
+        
+    Returns:
+        Penalty tensor (num_envs,)
+    """
+    # Binary contact detection
+    contacts = foot_contacts > contact_threshold
+    
+    # Compute horizontal velocity magnitude for each foot
+    foot_vel_magnitude = torch.norm(foot_velocities[:, :, :2], dim=-1)
+    
+    # Penalize sliding only when in contact
+    slide_penalty = torch.sum(foot_vel_magnitude * contacts.float(), dim=1)
+    
+    return slide_penalty
