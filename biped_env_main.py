@@ -50,7 +50,7 @@ class BipedEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
-        self.num_privileged_obs = 72  
+        self.num_privileged_obs = 123  # Updated to include all additional privileged observations 
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
         
@@ -196,11 +196,11 @@ class BipedEnv:
         
         # Privileged observation buffers
         # Only store robot links (excluding plane baselink at index 0)
-        num_robot_links = self.solver.n_links - 2  # Subtract 2 to exclude plane baselink and robot baselink
+        num_robot_links = self.solver.n_links - 1  # Subtract 1 to exclude plane baselink
         self.links_pos = torch.zeros((self.num_envs, num_robot_links, 3), device=self.device, dtype=torch.float32)  # Robot links only
         self.links_quat = torch.zeros((self.num_envs, num_robot_links, 4), device=self.device, dtype=torch.float32)  # Robot links only
-        self.dof_forces = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=torch.float32)
-        self.dof_accelerations = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=torch.float32)
+        self.dof_forces = torch.zeros((self.num_envs, self.solver.n_dofs), device=self.device, dtype=torch.float32)
+        self.dof_accelerations = torch.zeros((self.num_envs, self.solver.n_dofs), device=self.device, dtype=torch.float32)
 
     def _resample_commands(self, envs_idx):
         if len(envs_idx) == 0: return
@@ -315,7 +315,7 @@ class BipedEnv:
             
             # Get link positions and quaternions using direct field access (vectorized)
             # Skip plane baselink (index 0) and collect only robot links (index 1 onwards)
-            robot_link_start_idx = 2  # Skip plane baselink at index 0, and baselink as it has been included earlier in actor obs
+            robot_link_start_idx = 1  # Skip plane baselink at index 0, 
             num_robot_links = self.solver.n_links - robot_link_start_idx
             
             for i, solver_link_idx in enumerate(range(robot_link_start_idx, self.solver.n_links)):
@@ -328,9 +328,9 @@ class BipedEnv:
                 self.links_quat[:, i] = link_quat  # All envs, this robot link
             
             # Get DOF forces and accelerations using direct field access (vectorized)
-            for i, motor_dof_idx in enumerate(self.motors_dof_idx):
-                self.dof_forces[:, i] = torch.tensor(dofs_state.force[motor_dof_idx, 0], device=self.device)  # All envs, this DOF
-                self.dof_accelerations[:, i] = torch.tensor(dofs_state.acc[motor_dof_idx, 0], device=self.device)  # All envs, this DOF
+            for i in range(self.solver.n_dofs):
+                self.dof_forces[:, i] = torch.tensor(dofs_state.force[i, 0], device=self.device)  # All envs, this DOF
+                self.dof_accelerations[:, i] = torch.tensor(dofs_state.acc[i, 0], device=self.device)  # All envs, this DOF
                 
         except Exception as e:
             print(f"Error collecting privileged state: {e}")
@@ -343,19 +343,23 @@ class BipedEnv:
     def _compute_privileged_observations(self):
         """Create privileged observations for critic from simulator state."""
         # Flatten link positions and quaternions (robot links only, excluding plane)
-        links_pos_flat = self.links_pos.view(self.num_envs, -1)  # (num_envs, 9*3=27) for robot links
-        links_quat_flat = self.links_quat.view(self.num_envs, -1)  # (num_envs, 9*4=36) for robot links
+        links_pos_flat = self.links_pos.view(self.num_envs, -1)  # (num_envs, 10*3=30) for robot links
+        links_quat_flat = self.links_quat.view(self.num_envs, -1)  # (num_envs, 10*4=40) for robot links
 
         # Concatenate all privileged observations
-        # Format: [link_pos(27), link_quat(36), dof_forces(8), dof_acc(5)] = 76 total
+        # Format: [link_pos(30), link_quat(40), dof_forces(14), dof_acc(14), base_ang_vel(3), base_lin_vel(3), dof_pos(8), dof_vel(8), foot_contacts(2), last_actions(8)] = 130 total
         privileged_obs = torch.cat([
-            links_pos_flat,                   # Robot link positions (27 values)
-            links_quat_flat,                  # Robot link quaternions (36 values)  
-            self.dof_forces,                  # DOF forces (8 values)
-            self.dof_accelerations,           # DOF accelerations (8 values)
-        ], dim=1)  # Total: 76 values
-
-    
+            links_pos_flat,                   # Robot link positions (30 values)
+            links_quat_flat,                  # Robot link quaternions (40 values)
+            self.dof_forces,                  # DOF forces (14 values)
+            self.dof_accelerations,           # DOF accelerations (14 values)
+            self.base_ang_vel,                # Full base angular velocity (3 values: x, y, z)
+            self.base_lin_vel,                # Full base linear velocity (3 values: x, y, z)
+            self.dof_pos,                     # DOF positions for all 8 joints (8 values)
+            self.dof_vel,                     # DOF velocities for all 8 joints (8 values)
+            self.foot_contacts,               # Foot contacts (2 values: left, right)
+            self.last_actions,                # Previous actions (8 values)
+        ], dim=1)  # Total: 130 values
 
         self.privileged_obs_buf[:] = privileged_obs
 
