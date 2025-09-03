@@ -5,7 +5,7 @@ import numpy as np
 class GenesisSimulation:
     """
     Handles the setup and state of the Genesis physics simulation.
-    This class is not a ROS node. It purely manages simulation objects.
+    This class demonstrates how to query DOF and link names from the solver.
     """
     def __init__(self, show_viewer=False):
         """
@@ -22,18 +22,11 @@ class GenesisSimulation:
         self.scene = gs.Scene(show_viewer=show_viewer)
         self.plane = self.scene.add_entity(gs.morphs.Plane())
         
-        # --- Define Link Names ---
-        # These are needed to correctly load the robot and attach sensors later.
-        self.right_foot_link_name = "revolute_rightfoot"
-        self.left_foot_link_name = "revolute_leftfoot"
-        links_to_keep_list = [self.right_foot_link_name, self.left_foot_link_name]
-        
         # --- Load Robot ---
         self.biped_robot = self.scene.add_entity(
             gs.morphs.URDF(
                 file=str(biped_urdf_path),
-                fixed=False,
-                links_to_keep=links_to_keep_list
+                fixed=False
             )
         )
         
@@ -45,197 +38,222 @@ class GenesisSimulation:
         """
         self.scene.build()
         print("Genesis scene built.")
-        
-        # Print link information to understand the structure
-        print(f"Robot has {self.biped_robot.n_links} links:")
-        
-        # Access links directly from the links list
-        self.right_foot_index = None
-        self.left_foot_index = None
-        
-        for i, link in enumerate(self.biped_robot.links):
-            print(f"  Link {i}: {link.name}")
-            if link.name == self.right_foot_link_name:
-                self.right_foot_index = i
-                print(f"Found right foot '{self.right_foot_link_name}' at index {i}")
-            elif link.name == self.left_foot_link_name:
-                self.left_foot_index = i
-                print(f"Found left foot '{self.left_foot_link_name}' at index {i}")
-                
-        if self.right_foot_index is None:
-            print(f"Warning: Could not find right foot link '{self.right_foot_link_name}'")
-        if self.left_foot_index is None:
-            print(f"Warning: Could not find left foot link '{self.left_foot_link_name}'")
-    
-    def quaternion_to_rotation_matrix(self, q):
+    def explore_solver_methods(self):
         """
-        Convert quaternion to rotation matrix.
-        q: quaternion in [w, x, y, z] format (Genesis format)
-        Returns: 3x3 rotation matrix
+        Explore and print available methods and attributes of the solver.
         """
-        # Move tensor to CPU and convert to numpy if needed
-        if hasattr(q, 'cpu'):
-            q = q.cpu().numpy()
+        print("\n=== Exploring Solver Object ===")
+        solver = self.scene.rigid_solver
         
-        w, x, y, z = q
+        # Get all attributes and methods
+        all_methods = dir(solver)
         
-        # Rotation matrix from quaternion
-        R = np.array([
-            [1 - 2*(y**2 + z**2), 2*(x*y - w*z), 2*(x*z + w*y)],
-            [2*(x*y + w*z), 1 - 2*(x**2 + z**2), 2*(y*z - w*x)],
-            [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
-        ])
+        # Filter for actual methods (vs attributes)
+        methods = [m for m in all_methods if callable(getattr(solver, m)) and not m.startswith('__')]
+        attributes = [a for a in all_methods if not callable(getattr(solver, a)) and not a.startswith('__')]
         
-        return R
-    
-    def get_axis_orientation_wrt_world_z(self, rotation_matrix, axis_index):
+        # Print methods with their docstrings
+        print(f"\n=== Available Solver Methods ({len(methods)}) ===")
+        for method in sorted(methods):
+            doc = getattr(solver, method).__doc__
+            doc_summary = doc.split('\n')[0] if doc else "No documentation"
+            print(f"  • {method}() - {doc_summary}")
+        
+        # Print attributes
+        print(f"\n=== Available Solver Attributes ({len(attributes)}) ===")
+        for attr in sorted(attributes):
+            value = getattr(solver, attr)
+            type_info = type(value).__name__
+            print(f"  • {attr}: {type_info}")
+        
+        # Explore specific getter methods more deeply
+        getter_methods = [m for m in methods if m.startswith('get_')]
+        if getter_methods:
+            print(f"\n=== Detailed Getter Methods ({len(getter_methods)}) ===")
+            for method in sorted(getter_methods):
+                doc = getattr(solver, method).__doc__
+                print(f"  • {method}():")
+                print(f"    {doc if doc else 'No documentation'}")
+        
+    def query_dof_and_link_names(self):
         """
-        Get the orientation of a local axis relative to the world Z-axis.
-        
-        Args:
-            rotation_matrix: 3x3 rotation matrix of the link
-            axis_index: 0 for X-axis, 1 for Y-axis, 2 for Z-axis
-            
-        Returns:
-            angle_degrees: Angle between the specified axis and world Z-axis in degrees
-            dot_product: Dot product value (cosine of the angle)
+        Query and display DOF and link names with their indices.
+        This helps understand the mapping between solver indices and names.
         """
-        # World Z-axis vector
-        world_z = np.array([0, 0, 1])
-        
-        # Extract the specified axis from rotation matrix
-        # Column vectors of rotation matrix represent the local axes in world coordinates
-        local_axis = rotation_matrix[:, axis_index]  # X=0, Y=1, Z=2
-        
-        # Calculate dot product (cosine of angle between vectors)
-        dot_product = np.dot(local_axis, world_z)
-        
-        # Clamp dot product to valid range for arccos
-        dot_product = np.clip(dot_product, -1.0, 1.0)
-        
-        # Calculate angle in degrees
-        angle_radians = np.arccos(dot_product)
-        angle_degrees = np.degrees(angle_radians)
-        
-        return angle_degrees, dot_product
-    
-    def step(self):
-        """
-        Advances the simulation by one step and demonstrates solver access methods.
-        """
-        self.scene.step()
-        
-        print("\n=== Direct Solver Access - Complete Working Example ===")
-        
         try:
-            # Access the solver's state fields directly
+            # Access the solver
             solver = self.scene.rigid_solver
             
-            # Get number of DOFs and links
-            n_dofs = solver.n_dofs
-            n_links = solver.n_links
+            print(f"\n=== Solver Information ===")
+            print(f"Total DOFs in solver: {solver.n_dofs}")
+            print(f"Total links in solver: {solver.n_links}")
             
-            print(f"Number of DOFs: {n_dofs}")
-            print(f"Number of links: {n_links}")
+            print(f"\n=== Robot Entity Information ===")
+            print(f"Robot DOFs: {self.biped_robot.n_dofs}")
+            print(f"Robot links: {self.biped_robot.n_links}")
             
-            # ===== METHOD 1: Using Solver Getter Methods (RECOMMENDED) =====
-            print("\n--- Method 1: Using Solver Getter Methods (Recommended) ---")
-            
-            # Get DOF states using solver methods
-            dof_positions = solver.get_dofs_position()
-            dof_velocities = solver.get_dofs_velocity()
-            dof_forces = solver.get_dofs_force()
-            
-            print("DOF States:")
-            for i in range(min(5, n_dofs)):
-                print(f"  DOF {i}: pos={dof_positions[i]:.6f}, vel={dof_velocities[i]:.6f}, force={dof_forces[i]:.6f}")
-            
-            # Get link states using solver methods
-            link_positions = solver.get_links_pos()
-            link_quaternions = solver.get_links_quat()
-            link_masses = solver.get_links_inertial_mass()
-            
-            print("Link States:")
-            for i in range(min(5, n_links)):
-                pos = link_positions[i]
-                quat = link_quaternions[i]
-                mass = link_masses[i]
-                print(f"  Link {i}: pos=[{pos[0]:.6f}, {pos[1]:.6f}, {pos[2]:.6f}], mass={mass:.6f}")
-            
-            # ===== METHOD 2: Direct Taichi Field Access =====
-            print("\n--- Method 2: Direct Taichi Field Access ---")
-            
-            # Access state arrays (these are Taichi fields)
-            # Note: Be careful with indexing - these are internal solver arrays
-            
-            # Access DOF states directly from Taichi fields
-            dofs_state = solver.dofs_state
-            print("DOF States (Direct Taichi Access):")
-            
-            # For Taichi fields, we need to access individual elements
-            for dof_idx in range(min(n_dofs, 5)):
-                # Access Taichi field values - note the [None] indexing for scalar fields
-                dof_pos = dofs_state.pos[dof_idx, 0]  # Shape is (n_dofs, 1)
-                dof_vel = dofs_state.vel[dof_idx, 0]
-                dof_force = dofs_state.force[dof_idx, 0]
-                print(f"  DOF {dof_idx}: pos={dof_pos:.6f}, vel={dof_vel:.6f}, force={dof_force:.6f}")
-                # print("Difference between 0 & 1")
-                # dof_pos1 = dofs_state.pos[dof_idx, 0]  # Shape is (n_dofs, 1)
-                # dof_vel1 = dofs_state.vel[dof_idx, 0]
-                # dof_force1 = dofs_state.force[dof_idx, 0]
-                # print(f"  DOF {dof_idx} (repeat): pos={dof_pos1:.6f}, vel={dof_vel1:.6f}, force={dof_force1:.6f}")
-            
-            # Access link states directly from Taichi fields
-            links_state = solver.links_state
-            print("Link States (Direct Taichi Access):")
-            
-            # for link_idx in range(min(n_links, 5)):
-            #     # Access Taichi matrix field values - note the [None] indexing
-            #     link_pos = links_state.pos[link_idx, 0]  # Returns a 3D vector
-            #     link_quat = links_state.quat[link_idx, 0]  # Returns a 4D quaternion
-            #     link_mass = links_state.cinr_mass[link_idx, 0]  # Total mass
+            # Get DOF names from robot joints
+            print(f"\n=== DOF Index to Name Mapping ===")
+            joints = self.biped_robot.joints
+            print(f"Number of joints: {len(joints)}")
+            for i, joint in enumerate(joints):
+                print(f"DOF {i:2d}: {joint.name}")
                 
-            #     print(f"  Link {link_idx}: pos=[{link_pos[0]:.6f}, {link_pos[1]:.6f}, {link_pos[2]:.6f}], mass={link_mass:.6f}")
-            #     print(f"             quat=[{link_quat[0]:.6f}, {link_quat[1]:.6f}, {link_quat[2]:.6f}, {link_quat[3]:.6f}]")
+            # Get link names from robot links
+            print(f"\n=== Link Index to Name Mapping ===")
+            links = self.biped_robot.links
+            print(f"Number of links: {len(links)}")
+            for i, link in enumerate(links):
+                print(f"Link {i:2d}: {link.name}")
             
-            # ===== METHOD 3: Entity-level Access (Original) =====
-            print("\n--- Method 3: Entity-level Access (Robot-specific) ---")
+            # Create lookup dictionaries for easy access
+            self.dof_idx_to_name = {i: joint.name for i, joint in enumerate(joints)}
+            self.dof_name_to_idx = {joint.name: i for i, joint in enumerate(joints)}
+            self.link_idx_to_name = {i: link.name for i, link in enumerate(links)}
+            self.link_name_to_idx = {link.name: i for i, link in enumerate(links)}
+
+            # Demonstrate lookup usage
+            print(f"\n=== Lookup Dictionary Examples ===")
+            if len(self.dof_idx_to_name) > 3:
+                print(f"DOF index 3 is: '{self.dof_idx_to_name[3]}'")
             
-            # This accesses only the robot entity's DOFs/links (excludes ground plane)
-            robot_positions = self.biped_robot.get_links_pos()
-            robot_quaternions = self.biped_robot.get_links_quat()
-            robot_dof_positions = self.biped_robot.get_dofs_position()
+            # Look for specific joints if they exist
+            target_joints = ['right_knee', 'left_knee', 'right_hip1', 'left_hip1']
+            for joint_name in target_joints:
+                if joint_name in self.dof_name_to_idx:
+                    idx = self.dof_name_to_idx[joint_name]
+                    print(f"Joint '{joint_name}' is at index: {idx}")
             
-            print(f"Robot Entity - Links: {robot_positions.shape[0]}, DOFs: {robot_dof_positions.shape[0]}")
-            print(f"Robot Entity - First link position: {robot_positions[0]}")
-            print(f"Robot Entity - First DOF position: {robot_dof_positions[0]:.6f}")
+            # Look for foot links
+            target_links = ['revolute_leftfoot', 'revolute_rightfoot']
+            for link_name in target_links:
+                if link_name in self.link_name_to_idx:
+                    idx = self.link_name_to_idx[link_name]
+                    print(f"Link '{link_name}' is at index: {idx}")
+                    
+            # Show important robot DOF indices for control
+            print(f"\n=== Important Robot DOF Indices for Control ===")
+            control_joints = ['left_hip1', 'right_hip1', 'left_hip2', 'right_hip2', 
+                            'left_knee', 'right_knee', 'left_ankle', 'right_ankle']
+            for joint_name in control_joints:
+                if joint_name in self.dof_name_to_idx:
+                    idx = self.dof_name_to_idx[joint_name]
+                    print(f"  {joint_name:12s} -> DOF index {idx}")
+                    
+        except Exception as e:
+            print(f"Error querying names: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def test_solver_attributes_access(self):
+        """
+        Test accessing solver attributes: entities, joints, and links directly.
+        """
+        try:
+            solver = self.scene.rigid_solver
             
-            # ===== COMPARISON AND VERIFICATION =====
-            print("\n--- Verification: Comparing Methods ---")
+            print(f"\n=== Testing Solver Attributes Access ===")
             
-            # Compare solver method vs entity method for DOF 0
-            solver_dof_0 = dof_positions[0].item()
-            entity_dof_0 = robot_dof_positions[0].item() 
-            print(f"DOF 0 - Solver method: {solver_dof_0:.6f}")
-            print(f"DOF 0 - Entity method: {entity_dof_0:.6f}")
-            print(f"DOF 0 - Difference: {abs(solver_dof_0 - entity_dof_0):.8f}")
+            # Access solver entities
+            print(f"\n--- Solver Entities ---")
+            print(f"Number of entities: {solver._n_entities}")
+            print(f"Entities list length: {len(solver.entities)}")
+            for i, entity in enumerate(solver.entities):
+                print(f"  Entity {i}: {type(entity).__name__}")
+                if hasattr(entity, 'morph'):
+                    print(f"    Morph: {type(entity.morph).__name__}")
             
-            # Note: Solver has 10 links (includes ground), Entity has 9 links (robot only)
-            # Compare link 1 (first robot link)
-            solver_link_1 = link_positions[1]  # Link 1 in solver = Link 0 in robot entity
-            entity_link_0 = robot_positions[0]
-            print(f"Link position - Solver[1]: {solver_link_1}")
-            print(f"Link position - Entity[0]: {entity_link_0}")
+            # Access solver joints
+            print(f"\n--- Solver Joints ---")
+            print(f"Number of joints: {len(solver.joints)}")
+            for i, joint in enumerate(solver.joints):
+                joint_name = joint.name if hasattr(joint, 'name') else f"joint_{i}"
+                joint_type = type(joint).__name__
+                print(f"  Joint {i:2d}: {joint_name} ({joint_type})")
+                
+                # Try to get joint properties if available
+                if hasattr(joint, 'dof_start') and hasattr(joint, 'dof_end'):
+                    print(f"    DOF range: {joint.dof_start} to {joint.dof_end}")
+                if hasattr(joint, 'joint_type'):
+                    print(f"    Type: {joint.joint_type}")
+            
+            # Access solver links
+            print(f"\n--- Solver Links ---")
+            print(f"Number of links: {len(solver.links)}")
+            for i, link in enumerate(solver.links):
+                link_name = link.name if hasattr(link, 'name') else f"link_{i}"
+                link_type = type(link).__name__
+                print(f"  Link {i:2d}: {link_name} ({link_type})")
+                
+                # Try to get link properties if available
+                if hasattr(link, 'mass'):
+                    print(f"    Mass: {link.mass}")
+                if hasattr(link, 'entity_idx'):
+                    print(f"    Entity index: {link.entity_idx}")
+            
+            # Compare with robot entity access
+            print(f"\n--- Comparison: Robot Entity vs Solver ---")
+            print(f"Robot entity joints: {len(self.biped_robot.joints)}")
+            print(f"Robot entity links: {len(self.biped_robot.links)}")
+            
+            print(f"Solver joints: {len(solver.joints)}")
+            print(f"Solver links: {len(solver.links)}")
+            print("solver.links_state")
+            print(solver.links_state.pos[2:])
+            # Show the difference (solver includes all entities, robot is just one entity)
+            if len(solver.joints) > len(self.biped_robot.joints):
+                extra_joints = len(solver.joints) - len(self.biped_robot.joints)
+                print(f"Solver has {extra_joints} additional joints (likely from other entities)")
             
         except Exception as e:
-            print(f"Error accessing solver: {e}")
+            print(f"Error accessing solver attributes: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def test_direct_access_with_names(self):
+        """
+        Test direct Taichi field access using the name mappings.
+        """
+        try:
+            solver = self.scene.rigid_solver
+            dofs_state = solver.dofs_state
+            links_state = solver.links_state
+
+            
+            
+            print(f"\n=== Testing Direct Taichi Field Access ===")
+            
+            # Show first few DOF states with names (if we have them)
+            print(f"\nDOF States (with names if available):")
+            for dof_idx in range(solver.n_dofs):
+                dof_name = "unknown"
+                if hasattr(self, 'dof_idx_to_name') and dof_idx in self.dof_idx_to_name:
+                    dof_name = self.dof_idx_to_name[dof_idx]
+                
+                dof_pos = dofs_state.pos[dof_idx, 0]
+                dof_vel = dofs_state.vel[dof_idx, 0]
+                dof_force = dofs_state.force[dof_idx, 0]
+                print(f"  {dof_idx:2d} ({dof_name:15s}): pos={dof_pos:8.4f}, vel={dof_vel:8.4f}, force={dof_force:8.4f}")
+            
+            # Show first few link states with names (if we have them)
+            print(f"\nLink States (with names if available):")
+            for link_idx in range(solver.n_links):
+                link_name = "unknown"
+                if hasattr(self, 'link_idx_to_name') and link_idx in self.link_idx_to_name:
+                    link_name = self.link_idx_to_name[link_idx]
+                
+                link_pos = links_state.pos[link_idx, 0]
+                print(f"  {link_idx:2d} ({link_name:20s}): pos=[{link_pos[0]:7.4f}, {link_pos[1]:7.4f}, {link_pos[2]:7.4f}]")
+                
+        except Exception as e:
+            print(f"Error in direct access test: {e}")
             import traceback
             traceback.print_exc()
 
 
 def main():
     """
-    Main function to run the simulation and test solver access.
+    Main function to demonstrate DOF and link name querying.
     """
     # Create simulation instance
     sim = GenesisSimulation(show_viewer=False)
@@ -243,17 +261,17 @@ def main():
     # Build the scene
     sim.build_scene()
     
-    # Run simulation for a few steps to test the solver access
-    print("Starting simulation and testing direct solver access...")
-    for step_num in range(3):  # Run for just 3 steps to test
-        print(f"\n{'='*50}")
-        print(f"--- Step {step_num + 1} ---")
-        print(f"{'='*50}")
-        sim.step()
-        
-        # Add a small delay to make output readable
-        import time
-        time.sleep(1.0)
+    # Query and display all names
+    sim.query_dof_and_link_names()
+    
+    # Test solver attributes access
+    sim.test_solver_attributes_access()
+    
+    # Step simulation once to get meaningful state values
+    sim.scene.step()
+    
+    # Test direct access with names
+    sim.test_direct_access_with_names()
 
 if __name__ == "__main__":
     main()

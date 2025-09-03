@@ -33,10 +33,17 @@ def get_train_cfg(exp_name, max_iterations):
             "resume": False,
             "resume_path": None,
             "run_name": "",
+            
+            # New configurations
+            "num_steps_per_env": 24,
+            "save_interval": 50,
+            
+            # Logging
+            "logger": "wandb",  # Options: 'tensorboard', 'wandb', 'neptune'
         },
         "runner_class_name": "OnPolicyRunner",
-        "num_steps_per_env": 128,
-        "save_interval": 100,
+        "num_steps_per_env": 24,  # Updated value
+        "save_interval": 50,  # Updated value
         "empirical_normalization": None,
         "seed": 1,
     }

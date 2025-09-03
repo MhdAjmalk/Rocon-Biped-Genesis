@@ -15,17 +15,16 @@ try:
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
     raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
-# Import WandB runner instead of standard OnPolicyRunner
+
+# Use standard OnPolicyRunner from rsl-rl
+from rsl_rl.runners import OnPolicyRunner
+
+# Import WandB for logging if needed
 try:
-    from wandb_runner import WandbOnPolicyRunner
+    import wandb
     WANDB_AVAILABLE = True
-    print("✅ WandB integration available")
-except ImportError as e:
-    from rsl_rl.runners import OnPolicyRunner
-    WandbOnPolicyRunner = OnPolicyRunner
+except ImportError:
     WANDB_AVAILABLE = False
-    print(f"⚠️ WandB integration not available: {e}")
-    print("   Training will continue without WandB logging")
 
 import genesis as gs
 
@@ -38,18 +37,17 @@ def main():
     # Increased default batch size for better GPU utilization with optimized environment
     parser.add_argument("-B", "--num_envs", type=int, default=1024)  # Increased from 1 for performance
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
-    
-    # WandB arguments
-    parser.add_argument("--wandb_project", type=str, default="biped-ppo-training", 
-                       help="WandB project name")
-    parser.add_argument("--wandb_tags", type=str, nargs="*", default=["biped", "ppo", "genesis"],
-                       help="WandB tags for organizing runs")
-    parser.add_argument("--wandb_notes", type=str, default="",
-                       help="Notes for this WandB run")
-    parser.add_argument("--no_wandb", action="store_true",
-                       help="Disable WandB logging")
+    parser.add_argument("--wandb_login", action="store_true", help="Login to WandB before training")
     
     args = parser.parse_args()
+
+    # Handle WandB login if requested
+    if args.wandb_login and WANDB_AVAILABLE:
+        print("🔐 Logging into WandB...")
+        wandb.login()
+        print("✅ WandB login completed")
+    elif args.wandb_login and not WANDB_AVAILABLE:
+        print("⚠️ WandB login requested but WandB not available. Install with: pip install wandb")
 
     gs.init(logging_level="warning")
 
@@ -70,23 +68,35 @@ def main():
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
     )
 
-    # Configure WandB settings
-    wandb_config = None
-    if WANDB_AVAILABLE and not args.no_wandb:
-        wandb_config = {
-            'project_name': args.wandb_project,
-            'experiment_name': args.exp_name,
-            'tags': args.wandb_tags,
-            'notes': args.wandb_notes or f"Biped training with {args.num_envs} environments",
-            'log_frequency': 1  # Log every iteration
-        }
-        print(f"🔧 WandB Configuration:")
-        print(f"   Project: {wandb_config['project_name']}")
-        print(f"   Experiment: {wandb_config['experiment_name']}")
-        print(f"   Tags: {wandb_config['tags']}")
+    # Check if WandB logging is enabled in configuration
+    logger_type = train_cfg.get("runner", {}).get("logger", "tensorboard")
     
-    # Initialize runner with WandB integration
-    runner = WandbOnPolicyRunner(env, train_cfg, log_dir, device=gs.device, wandb_config=wandb_config)
+    # Initialize WandB if configured
+    if logger_type == "wandb" and WANDB_AVAILABLE:
+        # Initialize WandB
+        wandb.init(
+            project="biped-ppo-training",
+            name=args.exp_name,
+            config={
+                'train_cfg': train_cfg,
+                'env_cfg': env_cfg,
+                'obs_cfg': obs_cfg,
+                'reward_cfg': reward_cfg,
+                'command_cfg': command_cfg,
+                'num_envs': args.num_envs,
+            },
+            tags=["biped", "ppo", "genesis"],
+            notes=f"Biped training with {args.num_envs} environments"
+        )
+        print("✅ WandB logging initialized")
+    elif logger_type == "wandb" and not WANDB_AVAILABLE:
+        print("⚠️ WandB logging requested but WandB not available. Install with: pip install wandb")
+        print("   Falling back to TensorBoard logging")
+    else:
+        print(f"📊 Using {logger_type} logging")
+
+    # Initialize standard OnPolicyRunner
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
@@ -97,35 +107,32 @@ def main():
         final_model_path = os.path.join(log_dir, 'model_interrupted.pt')
         runner.save(final_model_path)
         
-        # Finish WandB logging gracefully
-        if hasattr(runner, 'wandb_logger') and runner.wandb_logger:
+        # Finish WandB if it was initialized
+        if logger_type == "wandb" and WANDB_AVAILABLE:
             print('Finishing WandB logging...')
-            runner.wandb_logger.finish()
+            wandb.finish()
         
         print('Graceful shutdown completed.')
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    print(f"🚀 Starting biped training with comprehensive WandB logging...")
-    print(f"📊 Tracking metrics:")
+    print(f"🚀 Starting biped training...")
+    print(f"📊 Tracking metrics with {logger_type}:")
     print(f"   • Episode Returns")
     print(f"   • Policy Loss")
     print(f"   • Value Loss") 
     print(f"   • Entropy")
-    print(f"   • KL Divergence")
-    print(f"   • Mean Total Reward")
     print(f"   • Performance Metrics (FPS, timing)")
-    print(f"   • Reward Components")
     
-    if WANDB_AVAILABLE and not args.no_wandb:
-        print(f"📈 WandB Dashboard will be available during training")
-    else:
-        print(f"⚠️  WandB logging disabled - training without cloud logging")
+    if logger_type == "wandb" and WANDB_AVAILABLE:
+        print(f"� WandB Dashboard: {wandb.run.url}")
     
-    print(f"📁 Logs directory: {log_dir}")
+    print(f"�📁 Logs directory: {log_dir}")
     print(f"🎮 Environments: {args.num_envs}")
     print(f"🔄 Max iterations: {args.max_iterations}")
+    print(f"💾 Save interval: {train_cfg['save_interval']}")
+    print(f"📊 Steps per env: {train_cfg['num_steps_per_env']}")
     print(f"\n⌨️  Press Ctrl+C to stop training and save the model.")
     
     try:
@@ -135,10 +142,15 @@ def main():
         print('Final model save completed.')
     except Exception as e:
         print(f'\nTraining stopped due to error: {e}')
-        # Still try to finish WandB logging
-        if hasattr(runner, 'wandb_logger') and runner.wandb_logger:
-            runner.wandb_logger.finish()
         raise
+    finally:
+        # Always finish WandB if it was initialized
+        if logger_type == "wandb" and WANDB_AVAILABLE:
+            try:
+                wandb.finish()
+                print('WandB logging finished.')
+            except:
+                pass
 
 
 if __name__ == "__main__":
@@ -147,26 +159,23 @@ if __name__ == "__main__":
 """
 PERFORMANCE OPTIMIZED TRAINING COMMANDS:
 
-# Basic training - runs until Ctrl+C with WandB logging
+# Basic training with TensorBoard logging (default)
 python biped_train.py -e biped-walking -B 2048
 
-# Training with custom WandB project and tags
-python biped_train.py -e biped-walking -B 2048 --wandb_project "my-biped-project" --wandb_tags biped ppo custom
+# Training with WandB logging (set logger: 'wandb' in biped_configs.py)
+python biped_train.py -e biped-walking -B 2048 --wandb_login
 
-# Training without WandB logging
-python biped_train.py -e biped-walking -B 2048 --no_wandb
+# Training with specific max iterations
+python biped_train.py -e biped-walking -B 2048 --max_iterations 200
 
-# Training with specific max iterations and custom WandB settings
-python biped_train.py -e biped-walking -B 2048 --max_iterations 200 --wandb_notes "Testing new reward function"
+# Training with different experiment name and environment count
+python biped_train.py -e my-biped-experiment -B 1024 --max_iterations 500
 
-# Full example with all WandB options
-python biped_train.py \
-    -e my-biped-experiment \
-    -B 1024 \
-    --max_iterations 500 \
-    --wandb_project "biped-research" \
-    --wandb_tags biped ppo research baseline \
-    --wandb_notes "Baseline run with default hyperparameters"
+CONFIGURATION NOTES:
+- Logger type is set in biped_configs.py: 'tensorboard', 'wandb', or 'neptune'
+- Steps per environment: 24 (configured in biped_configs.py)
+- Save interval: 50 iterations (configured in biped_configs.py)
+- Use --wandb_login flag to authenticate with WandB before training
 
 OPTIMIZATION NOTES:
 - Environment now uses pre-allocated tensor buffers
@@ -175,5 +184,6 @@ OPTIMIZATION NOTES:
 - Reward computation uses in-place operations
 - Recommended batch sizes: 2048-8192 depending on GPU memory
 - Performance improvements: 15-25% faster step times
-- WandB logging tracks all training metrics automatically
+- Configurable logging with TensorBoard or WandB support
 """
+"""193dc53ad6151ab3500be245d62c64d98cb40c82"""
