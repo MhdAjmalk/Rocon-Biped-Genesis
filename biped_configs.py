@@ -4,7 +4,7 @@ def get_train_cfg(exp_name, max_iterations):
             "class_name": "PPO",
             "clip_param": 0.2,
             "desired_kl": 0.01,
-            "entropy_coef": 0.01,
+            "entropy_coef": 0.03,
             "gamma": 0.99,
             "lam": 0.95,
             "learning_rate": 0.001,
@@ -18,10 +18,13 @@ def get_train_cfg(exp_name, max_iterations):
         "init_member_classes": {},
         "policy": {
             "activation": "elu",
-            "actor_hidden_dims": [512, 256, 128 ],
-            "critic_hidden_dims": [512, 256, 128 ],
+            "actor_hidden_dims": [512, 256, 128],
+            "critic_hidden_dims": [512, 256, 128, 64, 32],
             "init_noise_std": 1.0,
-            "class_name": "ActorCritic",
+            "class_name": "ActorCriticRecurrent",  # Change this to use the recurrent network
+            "rnn_type": "lstm",                   # Specify 'lstm'
+            "rnn_hidden_size": 256,               # Size of the RNN hidden state
+            "rnn_num_layers": 1,                  # Number of RNN layers
         },
         "runner": {
             "checkpoint": -1,
@@ -35,14 +38,14 @@ def get_train_cfg(exp_name, max_iterations):
             "run_name": "",
             
             # New configurations
-            "num_steps_per_env": 24,
+            "num_steps_per_env": 64,
             "save_interval": 50,
             
             # Logging
             "logger": "wandb",  # Options: 'tensorboard', 'wandb', 'neptune'
         },
         "runner_class_name": "OnPolicyRunner",
-        "num_steps_per_env": 24,  # Updated value
+        "num_steps_per_env": 64,  # Updated value
         "save_interval": 50,  # Updated value
         "empirical_normalization": None,
         "seed": 1,
@@ -81,19 +84,19 @@ def get_cfgs():
         "kp": 30.0,  # Higher than quadruped due to biped instability
         "kd": 1.0,   # Higher damping for stability
         # termination conditions - tighter for biped
-        "termination_if_roll_greater_than": 55,  # degree - bipeds can lean more
-        "termination_if_pitch_greater_than": 55, # degree
+        "termination_if_roll_greater_than": 30,  # degree - bipeds can lean more
+        "termination_if_pitch_greater_than": 45, # degree
         
         # Actuator constraint termination
-        "terminate_on_actuator_violation": True,  # Enable termination on severe violations
+        "terminate_on_actuator_violation": False,  # Enable termination on severe violations
         "actuator_violation_termination_threshold": 2.0,  # Terminate if violation > this value
         
         # Fall penalty thresholds (in degrees)
-        "fall_roll_threshold": 40.0,   # Roll threshold for fall penalty (slightly less than termination)
-        "fall_pitch_threshold": 40.0,  # Pitch threshold for fall penalty (slightly less than termination)
+        "fall_roll_threshold": 29.0,   # Roll threshold for fall penalty (slightly less than termination)
+        "fall_pitch_threshold": 44.0,  # Pitch threshold for fall penalty (slightly less than termination)
         # base pose - height adjusted for neutral configuration ground contact
-        "base_init_pos": [0.0, 0.0, 0.50],  # Lower spawn height for ground contact with neutral pose
-        "base_init_quat": [1.0, 0.0, 0.0, 0.0],
+        "base_init_pos": [0.0, 0.0, 0.43],  # Lower spawn height for ground contact with neutral pose
+        "base_init_quat": [0.0, 0.0, 0.0, 1.0],
         "episode_length_s": 90.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,  # Conservative scaling
@@ -155,7 +158,7 @@ def get_cfgs():
             "lin_vel": 2.0,      # Scaling for linear velocities in observations
             "ang_vel": 0.25,     # Scaling for angular velocities in observations
             "dof_pos": 1.0,      # Scaling for joint positions
-            "dof_vel": 0.05,     # Scaling for joint velocities
+            "dof_vel": 0.1,     # Scaling for joint velocities
             "base_euler": 1.0,   # For torso pitch/roll angles
             "base_height": 1.0,  # For torso height
         },
@@ -177,7 +180,7 @@ def get_cfgs():
         
         
         # Foot parallelism reward parameters
-        "foot_parallelism_k": 25.0,  # Scaling factor for exponential reward (higher = more sensitive)
+        "foot_parallelism_k": 15.0,  # Scaling factor for exponential reward (higher = more sensitive)
         
         # Foot air time reward parameters
         "feet_air_time_threshold": 0.1,  # Minimum air time threshold (seconds)
@@ -244,7 +247,7 @@ def get_cfgs():
     command_cfg = {
         "num_commands": 3,
         # Command range for forward velocity (m/s) - progressive training
-        "lin_vel_x_range": [-1.5, 1.5],    # Forward/backward velocity range
+        "lin_vel_x_range": [0.0, 0.5],    # Forward/backward velocity range
         # Command range for sideways velocity (m/s)
         "lin_vel_y_range": [0.0, 0.0],    # Left/right velocity range  
         # Command range for angular velocity (rad/s) - keep zero for now

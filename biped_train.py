@@ -18,6 +18,7 @@ except (metadata.PackageNotFoundError, ImportError) as e:
 
 # Use standard OnPolicyRunner from rsl-rl
 from rsl_rl.runners import OnPolicyRunner
+from wandb_patch import patch_onpolicy_runner_for_wandb
 
 # Import WandB for logging if needed
 try:
@@ -95,8 +96,15 @@ def main():
     else:
         print(f"📊 Using {logger_type} logging")
 
-    # Initialize standard OnPolicyRunner
+    # Initialize OnPolicyRunner
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    
+    # Patch for enhanced WandB logging when using WandB
+    if logger_type == "wandb" and WANDB_AVAILABLE:
+        patch_onpolicy_runner_for_wandb()
+        print("✅ Enhanced WandB logging enabled")
+    else:
+        print(f"📊 Using standard logging with {logger_type}")
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
