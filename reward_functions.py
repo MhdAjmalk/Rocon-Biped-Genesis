@@ -74,11 +74,11 @@ class RewardFunctions:
         torch.square(self.reward_buffers['lin_vel_error'], out=self.reward_buffers['lin_vel_error'])
         return torch.exp(-self.reward_buffers['lin_vel_error'] / self.reward_cfg["tracking_sigma"])
 
-    def reward_tracking_lin_vel_y(self, commands, base_lin_vel):
-        """Track commanded linear velocity in Y direction"""
-        torch.sub(commands[:, 1], base_lin_vel[:, 1], out=self.reward_buffers['lin_vel_error'])
-        torch.square(self.reward_buffers['lin_vel_error'], out=self.reward_buffers['lin_vel_error'])
-        return torch.exp(-self.reward_buffers['lin_vel_error'] / self.reward_cfg["tracking_sigma"])
+    # def reward_tracking_lin_vel_y(self, commands, base_lin_vel):
+    #     """Track commanded linear velocity in Y direction"""
+    #     torch.sub(commands[:, 1], base_lin_vel[:, 1], out=self.reward_buffers['lin_vel_error'])
+    #     torch.square(self.reward_buffers['lin_vel_error'], out=self.reward_buffers['lin_vel_error'])
+    #     return torch.exp(-self.reward_buffers['lin_vel_error'] / self.reward_cfg["tracking_sigma"])
 
     def reward_alive_bonus(self):
         """Provide a constant alive bonus"""
@@ -196,7 +196,7 @@ class RewardFunctions:
             'action_rate': self.reward_action_rate(last_actions, actions),
             'similar_to_default': self.reward_similar_to_default(dof_pos, default_dof_pos),
             'tracking_lin_vel_x': self.reward_tracking_lin_vel_x(commands, base_lin_vel),
-            'tracking_lin_vel_y': self.reward_tracking_lin_vel_y(commands, base_lin_vel),
+            # 'tracking_lin_vel_y': self.reward_tracking_lin_vel_y(commands, base_lin_vel),
             'alive_bonus': self.reward_alive_bonus(),
             'fall_penalty': self.reward_fall_penalty(base_euler, self.reward_cfg), # Assuming env_cfg was passed as reward_cfg
             'height_maintenance': self.reward_height_maintenance(base_pos),

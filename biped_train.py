@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="biped-walking")
     # Increased default batch size for better GPU utilization with optimized environment
-    parser.add_argument("-B", "--num_envs", type=int, default=1024)  # Increased from 1 for performance
+    parser.add_argument("-B", "--num_envs", type=int, default=512)  # Increased from 1 for performance
     parser.add_argument("--max_iterations", type=int, default=999999)  # Very large number, will run until Ctrl+C
     parser.add_argument("--wandb_login", action="store_true", help="Login to WandB before training")
     

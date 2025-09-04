@@ -8,21 +8,22 @@ def get_train_cfg(exp_name, max_iterations):
             "gamma": 0.99,
             "lam": 0.95,
             "learning_rate": 0.001,
+            "schedule": "adaptive",
             "max_grad_norm": 1.0,
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
-            "schedule": "adaptive",
             "use_clipped_value_loss": True,
             "value_loss_coef": 1.0,
+            
         },
         "init_member_classes": {},
         "policy": {
             "activation": "elu",
             "actor_hidden_dims": [512, 256, 128],
-            "critic_hidden_dims": [512, 256, 128, 64, 32],
+            "critic_hidden_dims": [256, 128, 64, 32],
             "init_noise_std": 1.0,
             "class_name": "ActorCriticRecurrent",  # Change this to use the recurrent network
-            "rnn_type": "lstm",                   # Specify 'lstm'
+            "rnn_type": "gru",                   # Specify 'gru'
             "rnn_hidden_size": 256,               # Size of the RNN hidden state
             "rnn_num_layers": 1,                  # Number of RNN layers
         },
@@ -153,7 +154,7 @@ def get_cfgs():
     }
     
     obs_cfg = {
-        "num_obs": 37,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37: base(8) + commands(3) + joints(16) + contacts(2) + actions(8)
+        "num_obs": 35,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37: base(8) + commands(3) + joints(16) + contacts(2) + actions(8)
         "obs_scales": {
             "lin_vel": 2.0,      # Scaling for linear velocities in observations
             "ang_vel": 0.25,     # Scaling for angular velocities in observations
@@ -193,7 +194,7 @@ def get_cfgs():
         "reward_scales": {
             # Velocity tracking rewards (primary objectives)
             "tracking_lin_vel_x": 20.0,     # Track commanded forward velocity
-            "tracking_lin_vel_y": 6.0,      # Track commanded sideways velocity
+            # "tracking_lin_vel_y": 6.0,      # Track commanded sideways velocity
             
             # Stability and regularization rewards
             "lin_vel_z": -2.0,              # Penalize vertical motion
@@ -219,7 +220,7 @@ def get_cfgs():
         "reward_enables": {
             # Velocity tracking rewards (primary objectives)
             "tracking_lin_vel_x": True,     # Track commanded forward velocity
-            "tracking_lin_vel_y": True,     # Track commanded sideways velocity
+            # "tracking_lin_vel_y": True,     # Track commanded sideways velocity
             
             # Stability and regularization rewards
             "lin_vel_z": True,              # Penalize vertical motion
@@ -228,8 +229,8 @@ def get_cfgs():
 
             "alive_bonus": True,            # Alive bonus per step
             "fall_penalty": True,           # Large penalty for falling
-            "torso_stability": False,        # Torso stability reward
-            "height_maintenance": False,     # Height maintenance
+            "torso_stability": True,        # Torso stability reward
+            "height_maintenance": True,     # Height maintenance
             
             "joint_movement": True,         # Reward for joint movement
 
@@ -245,13 +246,13 @@ def get_cfgs():
     }
     
     command_cfg = {
-        "num_commands": 3,
+        "num_commands": 1,
         # Command range for forward velocity (m/s) - progressive training
         "lin_vel_x_range": [0.0, 0.5],    # Forward/backward velocity range
-        # Command range for sideways velocity (m/s)
-        "lin_vel_y_range": [0.0, 0.0],    # Left/right velocity range  
-        # Command range for angular velocity (rad/s) - keep zero for now
-        "ang_vel_range": [0.0, 0.0],       # No turning for now, focus on linear motion
+        # # Command range for sideways velocity (m/s)
+        # "lin_vel_y_range": [0.0, 0.0],    # Left/right velocity range  
+        # # Command range for angular velocity (rad/s) - keep zero for now
+        # "ang_vel_range": [0.0, 0.0],       # No turning for now, focus on linear motion
     }
 
     return env_cfg, obs_cfg, reward_cfg, command_cfg

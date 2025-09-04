@@ -50,7 +50,7 @@ class BipedEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
-        self.num_privileged_obs = 123  # Updated to include all additional privileged observations 
+        self.num_privileged_obs = 124  # Updated to include all additional privileged observations 
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
         
@@ -126,7 +126,7 @@ class BipedEnv:
         # This eliminates the need for an intermediate dictionary and a final torch.cat
         obs_segment_lengths = {
             'base_euler': 2, 'base_ang_vel_xy': 2, 'base_ang_vel_z': 1, 'base_lin_vel': 2,
-            'base_pos_z': 1, 'commands': 3, 'hip_angles': 4, 'hip_velocities': 4,
+            'base_pos_z': 1, 'commands': 1, 'hip_angles': 4, 'hip_velocities': 4,
             'knee_angles': 2, 'knee_velocities': 2, 'ankle_angles': 2, 'ankle_velocities': 2,
             'foot_contacts': 2, 'last_actions': self.num_actions
         }
@@ -178,7 +178,9 @@ class BipedEnv:
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.commands = torch.zeros((self.num_envs, self.num_commands), device=self.device, dtype=torch.float32)
-        self.commands_scale = torch.tensor([self.obs_scales["lin_vel"], self.obs_scales["lin_vel"], self.obs_scales["ang_vel"]], device=self.device)
+        self.commands_scale = torch.tensor([self.obs_scales["lin_vel"],
+                                            #  self.obs_scales["lin_vel"], self.obs_scales["ang_vel"]
+                                             ], device=self.device)
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=torch.float32)
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
@@ -205,8 +207,8 @@ class BipedEnv:
     def _resample_commands(self, envs_idx):
         if len(envs_idx) == 0: return
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), self.device)
-        self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), self.device)
-        self.commands[envs_idx, 2] = 0.0
+        # self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), self.device)
+        # self.commands[envs_idx, 2] = 0.0
 
     def step(self, actions):
         self.step_count += 1
@@ -359,6 +361,7 @@ class BipedEnv:
             self.dof_vel,                     # DOF velocities for all 8 joints (8 values)
             self.foot_contacts,               # Foot contacts (2 values: left, right)
             self.last_actions,                # Previous actions (8 values)
+            self.commands * self.commands_scale  # Scaled commands (1 values: lin_X)
         ], dim=1)  # Total: 130 values
 
         self.privileged_obs_buf[:] = privileged_obs
