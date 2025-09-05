@@ -56,7 +56,7 @@ def patch_onpolicy_runner_for_wandb():
             
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(runner.device), critic_obs.to(runner.device)
-        runner.alg.actor_critic.train()
+        runner.alg.policy.train()  # Changed from runner.alg.actor_critic.train()
 
         ep_infos = []
         rewbuffer = deque(maxlen=100)
@@ -75,13 +75,13 @@ def patch_onpolicy_runner_for_wandb():
             # Data collection phase - use no_grad for efficiency but allow normal tensor computation
             with torch.no_grad():
                 for i in range(runner.num_steps_per_env):
-                    actions = runner.alg.act(obs, critic_obs)
+                    actions = runner.alg.act(obs)  # New API only takes obs
                     # Collect additional environment data for logging
                     obs, rewards, dones, infos = runner.env.step(actions)
                     privileged_obs = infos.get("observations", {}).get("critic", None)
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, rewards, dones = obs.to(runner.device), critic_obs.to(runner.device), rewards.to(runner.device), dones.to(runner.device)
-                    runner.alg.process_env_step(rewards, dones, infos)
+                    runner.alg.process_env_step(obs, rewards, dones, infos)  # New API includes obs
                     
                     if runner.log_dir is not None:
                         # Rewards
@@ -98,8 +98,8 @@ def patch_onpolicy_runner_for_wandb():
 
             # Learning step
             start = stop
-            # Make sure critic_obs is a normal tensor for training (no need to clone, it should be normal after no_grad)
-            runner.alg.compute_returns(critic_obs)
+            # Pass the full observation TensorDict for value computation
+            runner.alg.compute_returns(obs)  # Use obs (TensorDict) instead of critic_obs (tensor)
 
             update_result = runner.alg.update()
             
@@ -129,10 +129,11 @@ def patch_onpolicy_runner_for_wandb():
             tot_time += stop - start_time
             # Optional: log action noise std if available
             try:
-                if hasattr(runner.alg.actor_critic, 'log_std'):
-                    mean_std = runner.alg.actor_critic.log_std.exp().mean()
-                elif hasattr(runner.alg.actor_critic, 'std'):
-                    mean_std = runner.alg.actor_critic.std.mean()
+                # Policy standard deviation for exploration tracking
+                if hasattr(runner.alg.policy, 'log_std'):
+                    mean_std = runner.alg.policy.log_std.exp().mean()
+                elif hasattr(runner.alg.policy, 'std'):
+                    mean_std = runner.alg.policy.std.mean()
                 else:
                     mean_std = torch.tensor(1.0)  # Default value
             except:
@@ -217,7 +218,7 @@ def patch_onpolicy_runner_for_wandb():
                     else:
                         # Direct model saving without writer
                         torch.save({
-                            'model_state_dict': runner.alg.actor_critic.state_dict(),
+                            'model_state_dict': runner.alg.policy.state_dict(),
                             'optimizer_state_dict': runner.alg.optimizer.state_dict(),
                             'iter': it
                         }, model_path)
@@ -234,7 +235,7 @@ def patch_onpolicy_runner_for_wandb():
                 else:
                     # Direct model saving without writer
                     torch.save({
-                        'model_state_dict': runner.alg.actor_critic.state_dict(),
+                        'model_state_dict': runner.alg.policy.state_dict(),
                         'optimizer_state_dict': runner.alg.optimizer.state_dict(),
                         'iter': runner.current_learning_iteration
                     }, final_model_path)

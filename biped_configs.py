@@ -8,13 +8,21 @@ def get_train_cfg(exp_name, max_iterations):
             "gamma": 0.99,
             "lam": 0.95,
             "learning_rate": 0.001,
-            "schedule": "adaptive",
             "max_grad_norm": 1.0,
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
+            "schedule": "adaptive",
             "use_clipped_value_loss": True,
             "value_loss_coef": 1.0,
-            
+            "rnd_cfg": {
+                "weight": 0.0,                      # Start with RND disabled. Increase to encourage exploration.
+                "weight_schedule": None,            # No schedule for changing the weight over time.
+                "reward_normalization": True,       # Normalize intrinsic rewards for stability.
+                "learning_rate": 0.001,             # Learning rate for the RND predictor network.
+                "num_outputs": 128,                 # Size of the random feature vector.
+                "predictor_hidden_dims": [256, 128],# Architecture for the predictor network.
+                "target_hidden_dims": [128],        # Architecture for the (fixed) target network.
+            },
         },
         "init_member_classes": {},
         "policy": {
@@ -50,6 +58,8 @@ def get_train_cfg(exp_name, max_iterations):
         "save_interval": 50,  # Updated value
         "empirical_normalization": None,
         "seed": 1,
+        # Observation groups configuration (required for rsl-rl 3.0+)
+        "obs_groups": {"policy": ["policy"], "critic": ["policy", "privileged"]},
     }
 
     return train_cfg_dict
@@ -155,6 +165,7 @@ def get_cfgs():
     
     obs_cfg = {
         "num_obs": 35,  # 2+2+1+2+1+3+4+4+2+2+2+2+2+8 = 37: base(8) + commands(3) + joints(16) + contacts(2) + actions(8)
+        "num_privileged_obs": 91,
         "obs_scales": {
             "lin_vel": 2.0,      # Scaling for linear velocities in observations
             "ang_vel": 0.25,     # Scaling for angular velocities in observations

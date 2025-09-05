@@ -11,10 +11,10 @@ try:
         if metadata.version("rsl-rl"):
             raise ImportError
     except metadata.PackageNotFoundError:
-        if metadata.version("rsl-rl-lib") != "2.2.4":
+        if metadata.version("rsl-rl-lib") != "3.0.1":
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==3.0.1'.") from e
 
 # Use standard OnPolicyRunner from rsl-rl
 from rsl_rl.runners import OnPolicyRunner
@@ -29,7 +29,7 @@ except ImportError:
 
 import genesis as gs
 
-from biped_env_main import BipedEnv
+from env_wrapper import RSLRLCompatibleWrapper as BipedEnv
 from biped_configs import get_cfgs, get_train_cfg
 
 def main():

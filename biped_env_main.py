@@ -41,6 +41,7 @@ from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transfo
 from genesis.sensors import RigidContactForceGridSensor
 import numpy as np
 import time
+from tensordict import TensorDict
 
 from domain_randomization import DomainRandomization, gs_rand_float
 from reward_functions import RewardFunctions
@@ -50,7 +51,7 @@ class BipedEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
-        self.num_privileged_obs = 124  # Updated to include all additional privileged observations 
+        self.num_privileged_obs = obs_cfg["num_privileged_obs"]  # Updated to include all additional privileged observations
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
         
@@ -60,6 +61,8 @@ class BipedEnv:
 
         self.simulate_action_latency = True
         self.dt = 0.02
+        self.unwrapped = self      
+        self.step_dt = self.dt
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
 
         self.env_cfg = env_cfg
@@ -245,10 +248,17 @@ class BipedEnv:
         self.last_dof_vel[:] = self.dof_vel[:]
         self._update_fps()
         
+        # Create TensorDict for observations
+        obs = TensorDict({
+            "policy": self.obs_buf,
+            "privileged": self.privileged_obs_buf,
+        }, batch_size=self.num_envs)
+        
         self.extras["observations"]["critic"] = self.privileged_obs_buf
+        self.extras["observations"]["rnd_state"] = self.obs_buf
         self.extras["fps"] = self.current_fps
 
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
+        return obs, self.rew_buf, self.reset_buf, self.extras
 
     def _refresh_state(self):
         """Gets all the latest state information from the simulator."""
@@ -355,14 +365,7 @@ class BipedEnv:
             links_quat_flat,                  # Robot link quaternions (40 values)
             self.dof_forces,                  # DOF forces (14 values)
             self.dof_accelerations,           # DOF accelerations (14 values)
-            self.base_ang_vel,                # Full base angular velocity (3 values: x, y, z)
-            self.base_lin_vel,                # Full base linear velocity (3 values: x, y, z)
-            self.dof_pos,                     # DOF positions for all 8 joints (8 values)
-            self.dof_vel,                     # DOF velocities for all 8 joints (8 values)
-            self.foot_contacts,               # Foot contacts (2 values: left, right)
-            self.last_actions,                # Previous actions (8 values)
-            self.commands * self.commands_scale  # Scaled commands (1 values: lin_X)
-        ], dim=1)  # Total: 130 values
+        ], dim=1)  # Total: 91 values
 
         self.privileged_obs_buf[:] = privileged_obs
 
@@ -546,9 +549,17 @@ class BipedEnv:
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self._refresh_state()  # Refresh state to compute base_euler and other derived values
         self._create_observations() # Create initial observations
+        
+        # Create TensorDict for observations
+        obs = TensorDict({
+            "policy": self.obs_buf,
+            "privileged": self.privileged_obs_buf,
+        }, batch_size=self.num_envs)
+        
         self.extras["observations"]["critic"] = self.privileged_obs_buf
+        self.extras["observations"]["rnd_state"] = self.obs_buf
         self.extras["fps"] = self.current_fps
-        return self.obs_buf, self.extras
+        return obs, self.extras
     
     def _update_fps(self):
         if self.step_count % self.fps_update_interval == 0:
@@ -560,9 +571,16 @@ class BipedEnv:
 
     def get_observations(self):
         """Returns the current observation buffer and extras dictionary."""
+        # Create TensorDict for observations
+        obs = TensorDict({
+            "policy": self.obs_buf,
+            "privileged": self.privileged_obs_buf,
+        }, batch_size=self.num_envs)
+        
         self.extras["observations"]["critic"] = self.privileged_obs_buf
+        self.extras["observations"]["rnd_state"] = self.obs_buf
         self.extras["fps"] = self.current_fps
-        return self.obs_buf, self.extras
+        return obs, self.extras
     
     def _init_foot_tracking(self):
         """Initialize foot contact tracking for new reward functions."""
